@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hfgcs"
+version = "0.1.0"
+description = "HFGCS (High Frequency Global Communications System) monitoring: scanning, USB demodulation and recording"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "soundfile>=0.12",
+    "tomli>=2; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+# OpenWebRX websocket client (hfgcs_waterfall.py)
+openwebrx = ["websockets>=12"]
+# SoapySDR has no PyPI wheel: install python3-soapysdr from your distro and
+# create the venv with --system-site-packages. kiwiclient is not on PyPI
+# either; KiwiSDR support will vendor or reference it when it lands.
+dev = ["pytest>=7", "ruff>=0.4", "websockets>=12"]
+
+[project.scripts]
+hfgcs-scanner = "hfgcs_scanner:main"
+hfgcs-waterfall = "hfgcs_waterfall:main"
+
+[tool.setuptools]
+packages = ["hfgcs"]
+py-modules = ["hfgcs_scanner", "hfgcs_waterfall"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B"]
