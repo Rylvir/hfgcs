@@ -8,3 +8,5 @@ hfgcs_catalog.jsonl
 *.egg-info/
 build/
 config.toml
+/data/
+*.db
