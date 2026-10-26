@@ -343,3 +343,47 @@ def test_partial_start_detected_from_trailer_only():
     text = spell(BODY[10:]) + trailer
     r = parse_transcript(text)[0]
     assert r["type"] == "eam" and "partial_start" in r["flags"] and r["read1"] == BODY[10:]
+
+
+def test_garbled_message_follows_and_id_say_again():
+    # Real small.en output pattern: "Classic. Follow." and "I'd say again"
+    text = eam().replace("Message follows.", "Classic. Follow.").replace("I say again.", "I'd say again")
+    r = parse_eam(text)
+    assert r["body"] == BODY and r["read1"] == BODY and r["read2"] == BODY
+    assert "message_follows_inferred" in r["flags"] and "single_read" not in r["flags"]
+    assert r["preamble_reads"] == [BODY[:6]] * 3
+
+
+def test_bare_say_again_without_i():
+    r = parse_eam(eam().replace("I say again.", "say again"))
+    assert r["read2"] == BODY
+
+
+def test_lost_say_again_reads_are_self_split():
+    text = eam().replace("I say again.", "")
+    r = parse_eam(text)
+    assert r["read1"] == BODY and r["read2"] == BODY
+    assert "reads_split_inferred" in r["flags"] and "single_read" not in r["flags"]
+
+
+def test_lost_standby_preamble_repeats_are_stripped():
+    text = eam().replace(", stand by.", ".").replace("Message follows.", "")
+    r = parse_eam(text)
+    assert r["preamble"] == BODY[:6] and "preamble_inferred" in r["flags"]
+    assert r["body"] == BODY
+
+
+def test_garbled_again_variants():
+    for variant in ["Iced it again", "again", "I said again"]:
+        r = parse_eam(eam().replace("I say again.", variant))
+        assert r["read2"] == BODY, variant
+
+
+def test_unstructured_long_char_run_is_parsed_headless():
+    r = parse_transcript("noise noise " + spell(BODY) + " thank you")
+    assert r[0]["type"] == "eam" and r[0]["body"] == BODY
+
+
+def test_short_char_run_stays_unknown():
+    r = parse_transcript("radio check Alpha Bravo one two over")
+    assert r[0]["type"] == "unknown"

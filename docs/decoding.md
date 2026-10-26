@@ -230,31 +230,67 @@ The sidecar wraps these records with the recording entry and ASR provenance (`mo
   - All rows are on **11175 kHz**, from receivers `desktop-kiwi-kph`, `-iceland` and `-iceland+kph`. Only 4 messages have a true co-reception.
   - `voice_onset` timing exists only since 2026-10-12 (78 rows). Older rows use `clip_start`.
   - Of the 14 corrections, several are radio checks, and some have text longer than `char_count`. One fixes a rotated machine copy.
-  - Most importantly, **uncorrected `text` is missileer's machine ASR, not ground truth.** Only the corrected rows are human-checked, and even those are "silver" until we ear-check them.
+  - Most importantly, **uncorrected `text` is missileer's machine ASR, not ground truth.** Only the 14 corrected rows were checked by a listener.
   - The feed covers missileer's own receivers only (eam.watch rows are excluded).
 
-### Ingestion plan (missileer)
-1. `python -m decoding.ingest_missileer --sample N` fetches the 0.5 MB JSON index and maps rows to our label format. It ranks candidates in this order: corrected first, then complete `message` rows that have an `i_say_again` anchor. Audio is downloaded only with `--download-audio` and is hard-capped (10 per run). Each audio file's SHA-256 is recorded.
-2. Use stable ids: `mw:<missileer id>`. Assign a deterministic dev/test split by hashing the id (30% test). Before the set is frozen, re-split by **date** so that rebroadcasts of one message don't straddle splits: group by rebroadcast group id first.
-3. **Ear-check** each candidate in a review tool. Record body, read1, read2, preamble, callsign, addressee and declared length, and mark `.` for characters you can't hear. That promotes the row `machine/silver → gold`. Two reviewers on the test split; disagreements are adjudicated.
-4. Keep `reference_machine` (missileer's copy and `char_times`) as a **competitor baseline**. We report our CER and missileer's machine CER against the same gold labels.
-5. Re-ingest weekly, keyed by id. Respect `hidden` (collapsed duplicates) and retractions, since retracted rows disappear from the feed.
+### Gold / silver decision (2026-10-26)
+- **gold** = the 14 rows with a listener correction (`corrected: true`): 8 EAMs and 6 radio checks. The radio checks serve as negatives for detection. These labels were checked by missileer's listeners, not yet by us, and the doc treats them as gold by team decision.
+- **silver** = the other 224 rows. Their `text` is missileer's machine copy. We use it for structure and detection checks, and as a second CER number that measures *agreement with another ASR*. It is never the headline metric.
+- The `silver` CER subset is restricted to complete, fully readable EAMs whose audio has an `i_say_again` anchor (30 clips). `evaluate.load_subset("silver")` applies this filter.
 
-Field mapping: `id→source_id`, `text→labels.body` (`?`→`.`), `preamble→labels.preamble`, `announced_length→labels.declared_length`, `grade→type` (message/unconfirmed/fragment→`eam`, radio-check→`radio_check`, …), `heard_at/heard_at_basis/clip_start_at/voice_start_s→timing`, `station→receiver`, `receptions[].coreception→coreceptions`, `corrected/correction_source/machine_text→label_status + reference_machine`, `anchors`/`char_times`/`position_notes→reference_machine` (useful for per-read alignment evaluation). The feed has no callsign or addressee, so we label those by ear.
+### Eval set as built: `/workspace/hfgcs-data/eval/` (outside the repo, never committed)
+Built 2026-10-26 09:50 PDT (16:50 UTC) with:
 
-### Label format (`evalset/labels.jsonl`, one object per broadcast)
-The fields are those produced by `ingest_missileer.to_label`:
-- `id`, `source`, `source_id`, `license`, `attribution`, `audio_url`, `audio_path`, `audio_sha256`
+    python -m decoding.ingest_missileer --build /workspace/hfgcs-data/eval --audio all --max-mb 300
+
+The build refuses to run unless the feed's `license` is `CC0-1.0`. Gold audio is always fetched; silver audio is fetched only up to the byte budget. It writes:
+
+| Path | Content |
+|---|---|
+| `feed/archive_<generated_at>.json` | Unmodified feed snapshot (feed generated 2026-10-26 16:44 UTC) |
+| `labels.jsonl` | 238 label records (`ingest_missileer.to_label`) |
+| `manifest.jsonl`, `manifest.csv` | One row per clip: `clip_id, source_id, source_url, feed_url, license, attribution, retrieved_at, status, type, split, sha256, bytes, path` |
+| `audio/gold/*.opus` | 14 clips, 6.0 MB |
+| `audio/silver/*.opus` | 220 clips, 126 MB (4 silver rows have no clip in the feed) |
+| `cache/<asr-config-key>/<id>.json` | Cached ASR outputs written by `decoding.evaluate` |
+| `results/*.json` | Per-clip scores for each evaluation run |
+
+**Totals:** 238 rows (gold 14, silver 224) and 234 audio files, 132 MB, well under the 300 MB budget. Split by id hash: 163 dev / 75 test.
+All files are Opus in Ogg, 48 kHz mono, about 21 kb/s. License CC0-1.0, "attribution appreciated: missileer.watch".
+
+### Ingestion procedure
+1. `--build` (above) for the full set, or `--sample N` for a quick look. Ids are stable (`mw:<missileer id>`) and `labels.jsonl` is rewritten idempotently. Audio that has already been downloaded is not fetched again (each file is written to a `.part` file and then renamed).
+2. Each clip gets a deterministic dev/test split by id hash (30% test). Before the set is frozen, re-split by **date and rebroadcast group**, so that airings of one message don't straddle splits.
+3. **Ear-check (next):** confirm or correct gold. Add `read1`/`read2`, callsign and addressee, which the feed doesn't have. Promote silver rows to gold as they are checked.
+4. Keep `reference_machine` (missileer's copy and `char_times`) as a **competitor baseline**: `evaluate` prints missileer's machine CER on the same subset.
+5. Re-ingest weekly, keyed by id. Respect `hidden` (collapsed duplicates). Retracted rows disappear from the feed; the manifest keeps them, flagged.
+
+Field mapping:
+- `id→source_id`
+- `text→labels.body` (`?`→`.`)
+- `preamble→labels.preamble`
+- `announced_length→labels.declared_length`
+- `grade→type` (message/unconfirmed/fragment→`eam`, radio-check→`radio_check`, …)
+- `heard_at/heard_at_basis/clip_start_at/voice_start_s→timing`
+- `station→receiver`
+- `receptions[].coreception→coreceptions`
+- `corrected/correction_source/machine_text→label_status + reference_machine`
+- `anchors`/`char_times`/`position_notes→reference_machine`
+
+The feed has no callsign or addressee.
+
+### Label format (`labels.jsonl`, one object per broadcast)
+- `id`, `source`, `source_id`, `license`, `attribution`, `audio_url`, `audio_path`, `audio_sha256`, `audio_bytes`
 - `heard_at_utc`, `frequency_khz`, `receiver`, `type`
-- `label_status` (`machine` | `silver` | `gold`)
+- `label_status` (`silver` | `gold`)
 - `labels{body, preamble, declared_length, callsign, addressee, read1, read2}`
-- `reference_machine{…}`, `anchors`, `flags`, `split`
+- `reference_machine{…}`, `anchors`, `has_both_reads`, `flags`, `split`
 
-Gold labels add `labelled_by`, `labelled_at`, `ear_notes`, and for Skyking `labels.{codeword, time, authentication}`.
+Ear-checked labels will add `labelled_by`, `labelled_at`, `ear_notes`, and for Skyking `labels.{codeword, time, authentication}`.
 Negative examples (`type: radio_check | traffic | noise | phone_patch`) are included for detection evaluation.
 
-### Metrics (`decoding/metrics.py`; report per model/config, per receiver, per SNR bin)
-- **Body CER**: edit distance against the gold body divided by its length. Positions marked `.` in gold are excluded. Reported for the consensus body, for each read separately, and for missileer's machine copy as a baseline.
+### Metrics (`decoding/metrics.py`, `decoding/evaluate.py`; report per model/config, per receiver, per SNR bin)
+- **Body CER** (`evaluate.masked_edit_distance`): edit distance against the gold body divided by its length. A `.` in the label (unheard) matches any character at zero cost. We report micro CER (total edits divided by total reference characters) and the median per clip. Reported for the consensus body, for each read separately, and for missileer's machine copy as a baseline.
 - **Field exact-match:** callsign, addressee, preamble, declared length, and the Skyking codeword/time/authentication.
 - **Callsign accuracy**: exact match after normalisation, and a top-1 match against the day's callsign list.
 - **Detection precision/recall:** broadcast type over all recordings, including negatives. Skyking false positives are tracked separately.

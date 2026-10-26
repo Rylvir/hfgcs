@@ -27,6 +27,7 @@ from collections import Counter
 from typing import Optional, Sequence
 
 from .align import CharObs, consensus
+from .metrics import edit_distance
 from .tokens import Token, TokenInput, parse_number, token_chars, tokenize
 
 SCHEMA_VERSION = "0.1"
@@ -48,6 +49,7 @@ _MARKERS = {
     "message",
     "follows",
     "follow",
+    "sayagain",
     "i",
     "say",
     "again",
@@ -164,6 +166,38 @@ def _vote_preamble(reads: list[str]) -> str:
     return "".join(Counter(r[i] for r in pool).most_common(1)[0][0] for i in range(width))
 
 
+def _strip_leading_repeats(obs: list[CharObs]) -> tuple[list[CharObs], list[list[CharObs]]]:
+    """If ``obs`` starts with a 5-7 character block heard 2+ times (edit
+    distance <= 1 between copies), return (rest starting at the last copy,
+    [earlier copies]). The last copy is kept: it is the start of read 1."""
+    chars = "".join(o.char for o in obs)
+    for w in (6, 5, 7):
+        blocks = []
+        i = 0
+        while i + 2 * w <= len(chars) and edit_distance(chars[i : i + w], chars[i + w : i + 2 * w]) <= 1:
+            blocks.append(obs[i : i + w])
+            i += w
+        if blocks:
+            return obs[i:], blocks
+    return obs, []
+
+
+def _self_split(obs: list[CharObs], max_norm_dist: float = 0.5):
+    """Split a run holding both reads into (read1, read2) at the point where
+    the halves are most alike; None if no split is convincing."""
+    chars = "".join(o.char for o in obs)
+    n = len(chars)
+    best = None
+    for k in range(int(n * 0.35), int(n * 0.65) + 1):
+        a, b = chars[:k], chars[k:]
+        d = edit_distance(a, b) / max(len(a), len(b))
+        if best is None or d < best[0]:
+            best = (d, k)
+    if best and best[0] <= max_norm_dist:
+        return obs[: best[1]], obs[best[1] :]
+    return None
+
+
 # ---------------------------------------------------------------- EAM
 def parse_eam(transcript: TokenInput) -> dict:
     toks = tokenize(transcript)
@@ -211,6 +245,21 @@ def parse_eam(transcript: TokenInput) -> dict:
             break
         j += 1
     if i_msg < 0:
+        # ASR often garbles "message" ("Classic. Follow."): accept a bare
+        # follow(s/ed) shortly after the last "stand by".
+        sb_all = [k for k in range(p, len(n)) if n[k] == "standby"]
+        if sb_all:
+            last_sb = sb_all[-1]
+            # last stand by *before* any read-2 marker
+            again = _find(n, ["sayagain"], p)
+            if again >= 0:
+                before = [k for k in sb_all if k < again]
+                last_sb = before[-1] if before else last_sb
+            f = next((k for k in range(last_sb + 1, min(last_sb + 4, len(n))) if n[k] in _FOLLOWS), -1)
+            if f >= 0:
+                i_msg, i_follows = f, f
+                flags.append("message_follows_inferred")
+    if i_msg < 0:
         flags.append("missing_message_follows")
 
     # 3. preamble: (6 chars + "stand by") x3, between header and "message follows"
@@ -239,7 +288,7 @@ def parse_eam(transcript: TokenInput) -> dict:
 
     # 5-7. body reads
     b1_start = i_follows + 1 if i_follows >= 0 else (sb_positions[-1] + 1 if sb_positions else p)
-    i_again = _find(n, ["i", "say", "again"], b1_start)
+    i_again = _find(n, ["sayagain"], b1_start)
     trailer_markers = [
         _find(n, ["this", "complete", "message"], b1_start),
         _find(n, ["this", "is"], b1_start),
@@ -253,7 +302,7 @@ def parse_eam(transcript: TokenInput) -> dict:
 
     if i_again >= 0:
         b1_end = min(i_again, first_after(b1_start))
-        b2_start = i_again + 3
+        b2_start = i_again + 1
         b2_end = first_after(b2_start)
     else:
         flags.append("single_read")
@@ -261,6 +310,24 @@ def parse_eam(transcript: TokenInput) -> dict:
         b2_start = b2_end = b1_end
     read1, junk1 = _chars(toks[b1_start:b1_end])
     read2, junk2 = _chars(toks[b2_start:b2_end])
+    if not sb_positions and read1:
+        # "stand by" lost: the three preamble hearings run into read 1.
+        stripped, reps = _strip_leading_repeats(read1)
+        if reps:
+            pre_reads = ["".join(o.char for o in blk) for blk in reps]
+            preamble = _vote_preamble(pre_reads)
+            rec["preamble"], rec["preamble_reads"] = preamble, pre_reads
+            read1 = stripped
+            flags.append("preamble_inferred")
+    if not read2 and len(read1) >= 1.6 * (declared or DEFAULT_EAM_LENGTH) and len(read1) >= 20:
+        # "I say again" lost: both reads ran together; split where the two
+        # halves agree best.
+        split = _self_split(read1)
+        if split:
+            read1, read2 = split
+            flags.append("reads_split_inferred")
+            if "single_read" in flags:
+                flags.remove("single_read")
     if junk1 or junk2:
         flags.append("non_character_words_in_body")
     if not read1 and not read2:
@@ -387,12 +454,12 @@ def parse_skyking(transcript: TokenInput) -> dict:
     if i_sk < 0:
         flags.append("missing_skyking")
         i_sk = 0
-    i_again = _find(n, ["i", "say", "again"], i_sk)
+    i_again = _find(n, ["sayagain"], i_sk)
     i_this = _find(n, ["this", "is"], i_sk)
     end_all = i_this if i_this >= 0 else len(n)
     if i_again >= 0 and i_again < end_all:
         r1 = _skyking_read(toks, n, i_sk, i_again)
-        r2 = _skyking_read(toks, n, i_again + 3, end_all)
+        r2 = _skyking_read(toks, n, i_again + 1, end_all)
         have2 = True
     else:
         r1 = _skyking_read(toks, n, i_sk, end_all)
@@ -453,6 +520,18 @@ def _segment(n: list[str]) -> list[int]:
     return starts
 
 
+UNSTRUCTURED_MIN_CHARS = 12
+
+
+def _longest_char_run(toks: Sequence[Token]) -> int:
+    best = cur = 0
+    for t in toks:
+        c = token_chars(t)
+        cur = cur + len(c) if c else 0
+        best = max(best, cur)
+    return best
+
+
 def parse_transcript(transcript: TokenInput) -> list[dict]:
     """Split a recording's transcript into broadcasts and parse each one.
     Always returns a list; unrecognised audio yields one ``unknown`` record."""
@@ -467,13 +546,14 @@ def parse_transcript(transcript: TokenInput) -> list[dict]:
         # Recording may start mid-message.
         head_end = starts[0] if starts else len(n)
         head = n[:head_end]
-        if (
-            any(w in head for w in ("standby", "again", "complete", *_FOLLOWS))
-            or _find(head, ["i", "say", "again"]) >= 0
-        ):
+        if any(w in head for w in ("standby", "sayagain", "complete", *_FOLLOWS)) or "sayagain" in head:
             starts = [0] + starts
         elif _find(head, ["test", "count"]) >= 0:
             starts = [0] + starts
+        elif not starts and _longest_char_run(toks) >= UNSTRUCTURED_MIN_CHARS:
+            # No procedure words survived ASR, but a long run of characters
+            # did: parse as a headless EAM so the body is not lost.
+            starts = [0]
         elif not starts:
             return [
                 {

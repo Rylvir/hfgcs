@@ -137,7 +137,27 @@ def tokenize(transcript: TokenInput) -> list[Token]:
         if split[i].norm:
             out.append(split[i])
         i += 1
-    return drop_repetition_loops(out)
+    return drop_repetition_loops(_join_say_again(out))
+
+
+def _join_say_again(toks: list[Token]) -> list[Token]:
+    """ "I say again" / "I'd say again" / bare "again" -> one token
+    ``sayagain`` (ASR often mangles or drops the "I say")."""
+    out: list[Token] = []
+    i = 0
+    while i < len(toks):
+        if toks[i].norm == "again":
+            # "I say again", "I'd say again", "Iced it again", bare "again":
+            # "again" never occurs inside an EAM body, so it marks read 2.
+            first = toks[i]
+            while out and out[-1].norm in ("say", "said", "i", "id", "ill", "ive", "ai", "it", "iced"):
+                first = out.pop()
+            out.append(Token("sayagain", min(first.prob, toks[i].prob), first.start, toks[i].end))
+            i += 1
+            continue
+        out.append(toks[i])
+        i += 1
+    return out
 
 
 def drop_repetition_loops(tokens: list[Token], max_ngram: int = 4, max_repeats: int = 3) -> list[Token]:
