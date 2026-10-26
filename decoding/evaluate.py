@@ -221,19 +221,23 @@ def postprocess(words: list[dict], post: dict) -> list[dict]:
     return words
 
 
-def evaluate(labels: list[dict], name: str, overrides: dict, cache: Path) -> dict:
+def evaluate(labels: list[dict], name: str, overrides: dict, cache: Path, cached_only: bool = False) -> dict:
     from .asr import Transcriber
 
     cfg, post = split_config(overrides)
     tr = Transcriber(cfg)
     rows, asr_s, audio_s = [], 0.0, 0.0
+    missing = 0
     for lab in labels:
+        if cached_only and not (cache / cfg.key() / (lab["source_id"] + ".json")).exists():
+            missing += 1
+            continue
         r = transcribe_cached(tr, lab, cache)
         asr_s += r.get("asr_seconds", 0)
         audio_s += r.get("duration_s", 0)
         rows.append(score_clip(lab, parse_transcript(postprocess(r["words"], post))))
     agg = aggregate(rows)
-    agg.update(config=name, asr_key=cfg.key(), rtf=(asr_s / audio_s) if audio_s else None)
+    agg.update(config=name, asr_key=cfg.key(), rtf=(asr_s / audio_s) if audio_s else None, missing=missing)
     return {"summary": agg, "rows": rows}
 
 
@@ -262,6 +266,7 @@ def main(argv=None) -> int:
     ap.add_argument("--cache", type=Path, default=Path("/workspace/hfgcs-data/eval/cache"))
     ap.add_argument("--out", type=Path, default=None, help="write per-clip JSON results here")
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--cached-only", action="store_true", help="score only clips already in the cache")
     args = ap.parse_args(argv)
     labels = load_subset(args.labels, args.subset)[: args.limit]
     m = baseline_machine(labels)
@@ -269,7 +274,9 @@ def main(argv=None) -> int:
     print(HEADER)
     results = {}
     for name in args.config or ["baseline"]:
-        res = evaluate(labels, name, CONFIGS[name], args.cache)
+        res = evaluate(labels, name, CONFIGS[name], args.cache, args.cached_only)
+        if res["summary"]["missing"]:
+            print(f"<!-- {name}: {res['summary']['missing']} clips not cached, skipped -->")
         results[name] = res
         print(fmt_row(res["summary"]), flush=True)
     if args.out:

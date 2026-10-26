@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Sequence
 
-from .metrics import edit_distance
+from .similarity import text_similarity
 
 MAX_BODY_CER = 0.2  # bodies this close are treated as the same message
 WINDOW = timedelta(hours=24)
@@ -27,7 +27,8 @@ def link_rebroadcasts(
     ``{"group_id", "body", "members": [{"id", "relation"}]}`` where relation is
     ``first``, ``simulcast`` (within SIMULCAST_SECONDS of the first airing) or
     ``rebroadcast``. Union-find over pairs whose bodies are within ``max_cer``
-    of each other and within ``window`` in time."""
+    of each other (``similarity.text_similarity`` >= 1 - max_cer) and within
+    ``window`` in time."""
     recs = [r for r in records if r.get("body")]
     parent = list(range(len(recs)))
 
@@ -45,7 +46,8 @@ def link_rebroadcasts(
             ref = max(len(a["body"]), len(b["body"]))
             if abs(len(a["body"]) - len(b["body"])) > max_cer * ref:
                 continue
-            if edit_distance(a["body"], b["body"]) / ref <= max_cer:
+            sim = text_similarity(a["body"], b["body"])  # same comparison the DB tool uses
+            if sim is not None and sim >= 1.0 - max_cer:
                 parent[find(i)] = find(j)
     groups: dict[int, list[dict]] = {}
     for i, r in enumerate(recs):
