@@ -1,14 +1,17 @@
 """KiwiSDR source with a fake kiwirecorder: etiquette rules and streaming."""
 
 import json
+import signal
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 from hfgcs.config import KiwiSettings
-from hfgcs.sources import SourceError, TuneRefused
+from hfgcs.sources import SourceError, TuneRefused, kiwisdr
 from hfgcs.sources.kiwisdr import KiwiSource, nominal_rate, parse_wav_header, reset_etiquette_state
 
 FAKE = str(Path(__file__).with_name("fake_kiwirecorder.py"))
@@ -40,7 +43,7 @@ def calls(tmp_path):
     return [json.loads(line) for line in p.read_text().splitlines()] if p.exists() else []
 
 
-def make(hosts, status=None, resolver=None, clock=None, **kw):
+def make(hosts, status=None, resolver=None, clock=None, popen=None, **kw):
     base = dict(
         hosts=tuple(hosts),
         channel_khz=11175,
@@ -60,6 +63,7 @@ def make(hosts, status=None, resolver=None, clock=None, **kw):
         resolver=resolver or (lambda h: None),
         clock=clock,
         sleep=clock.sleep,
+        popen=popen,
     )
 
 
@@ -296,3 +300,230 @@ def test_scanner_capture_receiver_id_follows_kiwi_host(tmp_path):
     assert sc.capture_for(11175.0, 12000).receiver_id == "kiwi-a.example-8073"
     src.current = src.hosts[1]
     assert sc.capture_for(11175.0, 12000).receiver_id == "kiwi-b.example-8074"
+
+
+# -- one session per kiwirecorder process -------------------------------------------
+
+
+class RecordingPopen:
+    """subprocess.Popen that keeps every process it starts."""
+
+    def __init__(self):
+        self.procs = []
+
+    def __call__(self, *a, **kw):
+        proc = subprocess.Popen(*a, **kw)
+        self.procs.append(proc)
+        return proc
+
+
+def session_hosts(tmp_path):
+    return [a[a.index("-s") + 1] for a in calls(tmp_path) if a[0] != "RECONNECT"]
+
+
+def reconnects(tmp_path):
+    return [a for a in calls(tmp_path) if a[0] == "RECONNECT"]
+
+
+def read_until_host(src, clock, host, reads=200):
+    for _ in range(reads):
+        c = src.read(0.2)
+        if len(c.samples) and src.current is not None and src.current.host == host:
+            return c
+        clock.t += 1
+    raise AssertionError(f"never streamed from {host}: {src.log}")
+
+
+def test_kiwirecorder_runs_at_a_log_level_that_shows_reconnects(tmp_path):
+    with make(["kiwi.example:8073"]) as src:
+        src.tune(11175)
+        read_audio(src, 0.1)
+    argv = calls(tmp_path)[0]
+    assert argv[argv.index("--log") + 1] == "info"
+    assert argv[argv.index("--connect-retries") + 1] == "1"
+    assert argv[argv.index("--busy-retries") + 1] == "1"
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "kphsdr.com:8073 server closed the connection cleanly. Reconnecting after 5 seconds",
+        "kphsdr.com:8073 server closed the connection unexpectedly. Reconnecting after 5 seconds",
+        "kphsdr.com:8073 Too busy now. Reconnecting after 15 seconds",
+        "kphsdr.com:8073 Too busy now. Redirecting to other.example:8073",
+        "2026-10-26 15:38:01,123 pid 4242 Failed to connect, sleeping and reconnecting error='timed out'",
+    ],
+)
+def test_session_end_patterns_match_kiwiclient_v1_11_lines(line):
+    assert any(p.search(line) for p in kiwisdr.SESSION_END_PATTERNS)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "2026-10-26 15:38:01,123 pid 4242 started netcat recorder 0",
+        "2026-10-26 15:38:01,123 pid 4242 Kiwi server version: 1.826",
+        "2026-10-26 15:38:01,123 pid 4242 Sample rate drift correction: advertised=12000.00 Hz, "
+        "actual=11999.10 Hz, drift=0.010 sec, correction_factor=0.999925",
+    ],
+)
+def test_ordinary_info_lines_do_not_end_the_session(line):
+    assert not any(p.search(line) for p in kiwisdr.SESSION_END_PATTERNS)
+
+
+@pytest.mark.parametrize("bad", ["kick", "stubborn"])
+def test_server_ended_session_stops_process_before_it_reconnects(tmp_path, monkeypatch, bad):
+    monkeypatch.setenv("FAKE_KIWI_RECONNECT_S", "1.5")
+    monkeypatch.setattr(kiwisdr, "STOP_GRACE_S", 0.3)
+    clock, popen = Clock(), RecordingPopen()
+    src = make([f"{bad}.example:8073", "good.example:8073"], clock=clock, popen=popen)
+    with src:
+        src.tune(11175)
+        read_until_host(src, clock, "good.example")
+        first = popen.procs[0]
+        assert first.poll() is not None  # the kicked process is gone
+        if bad == "stubborn":
+            assert first.returncode == -signal.SIGTERM  # ignored SIGINT, terminated after the grace
+        text = "\n".join(src.log)
+        assert f"{bad}.example:8073: kicked; abandoned, retired 60 min" in text
+        assert "server closed the connection cleanly. Reconnecting after 5 seconds" in text
+        assert "one session per process" in text
+        assert "next attempt in 30 s" in text  # counted toward backoff
+        assert src.skip_reason(src.hosts[0]).startswith("retired")  # set aside
+    time.sleep(1.8)  # past the fake's reconnect delay
+    assert reconnects(tmp_path) == []  # it never opened a second session
+    assert session_hosts(tmp_path) == [f"{bad}.example", "good.example"]  # one attempt on the bad host
+
+
+def test_session_end_line_counts_even_if_process_exits_after_a_long_session(tmp_path):
+    # kiwirecorder prints the line and exits by itself after > 60 s of audio: still a failed
+    # session (host retired, backoff), not a normal end with only a rest.
+    clock, popen = Clock(), RecordingPopen()
+    src = make(["kickexit.example:8073", "good.example:8073"], clock=clock, popen=popen)
+    with src:
+        src.tune(11175)
+        read_audio(src, 0.5)
+        clock.t += 120
+        read_until_host(src, clock, "good.example")
+        assert any("kickexit.example:8073: kicked; abandoned, retired 60 min" in m for m in src.log)
+        assert src.skip_reason(src.hosts[0]).startswith("retired")
+    assert session_hosts(tmp_path) == ["kickexit.example", "good.example"]
+
+
+def test_redirect_stops_process_instead_of_following_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(kiwisdr, "STOP_GRACE_S", 0.3)
+    clock, popen = Clock(), RecordingPopen()
+    src = make(["redirect.example:8073", "good.example:8073"], clock=clock, popen=popen)
+    with src:
+        src.tune(11175)
+        read_until_host(src, clock, "good.example")
+        assert popen.procs[0].poll() is not None
+        assert any("redirect.example:8073: too_busy; abandoned, retired 60 min" in m for m in src.log)
+    assert session_hosts(tmp_path) == ["redirect.example", "good.example"]
+
+
+def test_natural_end_after_tlimit_rests_without_retiring(tmp_path):
+    # kiwirecorder's own --tlimit end: it exits quietly; the slot is released, we rest >= 60 s.
+    clock = Clock()
+    src = make(["kiwi.example:8073"], clock=clock)
+    with src:
+        src.tune(11175)
+        read_audio(src, 0.5)
+        clock.t += 1300  # just under our own 1320 s cap, which would otherwise fire first
+        for _ in range(50):
+            src.read(0.2)
+            if src.session is None:
+                break
+        assert src.session is None
+        assert any("stream ended after" in m for m in src.log)
+        assert src.skip_reason(src.hosts[0]) is None  # not retired
+        assert src._not_before - clock.t >= 59
+        assert src._failures == 0
+
+
+def test_stderr_is_drained_while_streaming(tmp_path):
+    # A chatty kiwirecorder must not block on a full stderr pipe.
+    script = tmp_path / "chatty.py"
+    script.write_text(
+        "import sys, struct\n"
+        "sys.stderr.write('x' * 200 + '\\n' * 1)\n"
+        "for _ in range(2000): sys.stderr.write('info line ' + 'y' * 100 + '\\n')\n"
+        "sys.stderr.flush()\n"
+        "out = sys.stdout.buffer\n"
+        "fmt = struct.pack('<HHIIHH', 1, 1, 12000, 24000, 2, 16)\n"
+        "out.write(b'RIFF' + struct.pack('<I', 0x7FFFFFF0) + b'WAVE')\n"
+        "out.write(b'fmt ' + struct.pack('<I', len(fmt)) + fmt)\n"
+        "out.write(b'data' + struct.pack('<I', 0x7FFFFFF0 - 36))\n"
+        "out.write(b'\\x10\\x00' * 12000)\n"
+        "out.flush()\n"
+    )
+    proc = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    session = kiwisdr.KiwiSession(proc)
+    assert session.header_ready.wait(10) and session.rate == 12000
+    assert session.ended.wait(10)
+    session.wait_stderr(5)
+    assert session.stderr_done.is_set() and session.session_end is None
+    session.stop()
+    assert proc.wait(5) == 0
+
+
+def _scanner_config(tmp_path, **kiwi):
+    lines = [
+        'source = "kiwisdr"',
+        f'record_dir = "{tmp_path / "rec"}"',
+        "[kiwisdr]",
+        "enabled = true",
+        'ident = "HFGCS-Monitor"',
+        "channel_khz = 11175",
+        'hosts = ["stall.example:8073"]',
+        "check_status = false",
+        "stall_timeout_s = 0",
+        f'kiwirecorder = "{FAKE}"',
+        f'python = "{sys.executable}"',
+    ] + [f"{k} = {v}" for k, v in kiwi.items()]
+    path = tmp_path / "kiwi.toml"
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
+def test_scanner_exits_0_on_sigint_even_with_a_dead_log_pipe(tmp_path):
+    # systemd KillSignal=SIGINT also stops the unit's tee, so stdout is a broken pipe by the
+    # time we print "Stopping...". That used to exit 1 (logged as Failed).
+    cfg = _scanner_config(tmp_path)
+    scanner = Path(__file__).resolve().parent.parent / "hfgcs_scanner.py"
+    proc = subprocess.Popen(
+        [sys.executable, "-u", str(scanner), "--config", str(cfg), "-v"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    try:
+        deadline = time.monotonic() + 20
+        seen = b""
+        while b"connect stall.example" not in seen and time.monotonic() < deadline:
+            seen += proc.stdout.readline()
+        assert b"connect stall.example" in seen, seen
+        time.sleep(0.3)
+        proc.stdout.close()  # the log pipe dies first
+        proc.send_signal(signal.SIGINT)
+        assert proc.wait(20) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+def test_scanner_real_errors_stay_nonzero(tmp_path):
+    import hfgcs_scanner
+
+    cfg = _scanner_config(tmp_path, enabled="false")
+    assert hfgcs_scanner.main(["--config", str(cfg)]) == 1
+
+
+def test_scanner_sigint_outside_capture_loop_is_clean(monkeypatch):
+    import hfgcs_scanner
+
+    def boom(argv=None):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(hfgcs_scanner, "_main", boom)
+    assert hfgcs_scanner.main([]) == 0

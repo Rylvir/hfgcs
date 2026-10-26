@@ -20,6 +20,10 @@ Ops coverage survey) are enforced here, not left to flags:
 * ``too_busy`` / ``ip_limit`` / redirect / bad password / kicked: abandon at
   once, no retry, host retired for an hour; other failures retire it 30 min;
 * exponential backoff with jitter between attempts;
+* one session per kiwirecorder process: kiwirecorder reconnects by itself after
+  the server ends a session (see ``SESSION_END_PATTERNS``), so we run it at
+  ``--log info``, watch its stderr, and stop it on the first such message;
+  the session counts as failed toward the host's retirement and backoff;
 * every connection identifies itself (``ident_user`` via ``-u``; our HTTP
   ``/status`` probe sends a User-Agent).
 """
@@ -59,9 +63,35 @@ REFUSAL_PATTERNS = [
     (re.compile(r"no multiple connections|ip.?limit", re.I), "ip_limit"),
     (re.compile(r"redirect", re.I), "redirect"),
     (re.compile(r"bad password|badp", re.I), "bad_password"),
-    (re.compile(r"inactivity|time.?limit|kicked|reconnecting after", re.I), "kicked"),
+    (re.compile(r"inactivity|time.?limit|kicked|reconnecting after|server closed the connection", re.I),
+     "kicked"),
     (re.compile(r"server is down|KiwiDownError", re.I), "down"),
 ]
+
+# kiwirecorder messages that mean the process is about to open another session by
+# itself. Checked against jks-prv/kiwiclient v1.11 (commit 4eb733e), kiwi/worker.py:
+#   KiwiServerTerminatedConnection (the Kiwi ended a running session), logged at INFO:
+#     "<host>:<port> server closed the connection cleanly. Reconnecting after 5 seconds"
+#     "<host>:<port> server closed the connection unexpectedly. Reconnecting after 5 seconds"
+#   then it waits 5 s and reconnects in the same process with no limit
+#   (--connect-retries / --busy-retries do not apply to this path);
+#   KiwiTooBusyError (only if --busy-retries were > 1), WARNING:
+#     "<host>:<port> Too busy now. Reconnecting after <n> seconds"
+#   KiwiRedirectError, WARNING (then it connects to the other Kiwi):
+#     "<host>:<port> Too busy now. Redirecting to <host>:<port>"
+#   connect failure (only retried if --connect-retries were > 1), WARNING:
+#     "Failed to connect, sleeping and reconnecting error='...'"
+# kiwirecorder has no supported switch that disables the reconnect: --no-api does
+# skip it, but it is a test option that also stops sending the ident, frequency and
+# mode, so it cannot be used.
+SESSION_END_PATTERNS = [
+    re.compile(r"server closed the connection", re.I),
+    re.compile(r"reconnecting after \d+ seconds", re.I),
+    re.compile(r"redirecting to", re.I),
+    re.compile(r"sleeping and reconnecting", re.I),
+]
+KIWIRECORDER_LOG_LEVEL = "info"  # SESSION_END_PATTERNS' first line is logged at INFO
+STOP_GRACE_S = 2.0  # SIGINT grace before SIGTERM; shorter than kiwirecorder's 5 s reconnect wait
 
 # Process-wide bookkeeping shared by every KiwiSource instance.
 _LOCK = threading.Lock()
@@ -146,21 +176,34 @@ def parse_wav_header(read) -> tuple[int, int]:
 
 
 class KiwiSession:
-    """One running kiwirecorder process feeding a queue of audio blocks."""
+    """One running kiwirecorder process feeding a queue of audio blocks.
 
-    def __init__(self, proc, block_samples: int = 1024):
+    The process carries exactly one Kiwi session: stderr is read continuously (so
+    the pipe never fills) and the first message saying kiwirecorder is about to
+    reconnect by itself stops the process (SIGINT, then SIGTERM after
+    ``stop_grace_s``) before it can open a second session.
+    """
+
+    def __init__(self, proc, block_samples: int = 1024, stop_grace_s: float | None = None):
         self.proc = proc
         self.q: queue.Queue = queue.Queue(maxsize=512)
         self.rate = 0
         self.channels = 1
         self.reason: str | None = None
+        self.session_end: str | None = None  # kiwirecorder line that ended the session
         self.stderr_tail: list[str] = []
         self.header_ready = threading.Event()
         self.ended = threading.Event()
+        self.stderr_done = threading.Event()
+        self.stopping = False  # set once we stop the process (ours or after session_end)
+        self.stop_grace_s = STOP_GRACE_S if stop_grace_s is None else stop_grace_s
+        self._stop_lock = threading.Lock()
         self.block_bytes = 2 * block_samples
         threading.Thread(target=self._stdout, daemon=True).start()
         if proc.stderr is not None:
             threading.Thread(target=self._stderr, daemon=True).start()
+        else:
+            self.stderr_done.set()
 
     def _read_exact(self, n: int) -> bytes:
         buf = b""
@@ -192,24 +235,59 @@ class KiwiSession:
             self.header_ready.set()
 
     def _stderr(self) -> None:
-        for raw in self.proc.stderr:
-            line = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
-            line = line.strip()
-            if not line:
-                continue
-            self.stderr_tail = (self.stderr_tail + [line])[-20:]
-            for pattern, reason in REFUSAL_PATTERNS:
-                if pattern.search(line) and self.reason is None:
-                    self.reason = reason
+        try:
+            # Keep reading to EOF even after we decide to stop, so the child never
+            # blocks on a full stderr pipe.
+            for raw in self.proc.stderr:
+                line = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
+                line = line.strip()
+                if line:
+                    self._stderr_line(line)
+        except (OSError, ValueError):
+            pass
+        finally:
+            self.stderr_done.set()
+
+    def _stderr_line(self, line: str) -> None:
+        self.stderr_tail = (self.stderr_tail + [line])[-20:]
+        if self.stopping:
+            return  # anything printed while we shut it down is not the server's doing
+        for pattern, reason in REFUSAL_PATTERNS:
+            if pattern.search(line) and self.reason is None:
+                self.reason = reason
+        if self.session_end is None and any(p.search(line) for p in SESSION_END_PATTERNS):
+            self.session_end = line
+            self.reason = self.reason or "kiwirecorder about to reconnect in-process"
+            log.warning("kiwisdr: kiwirecorder session ended (%s); stopping it before it reconnects", line)
+            self.stopping = True
+            threading.Thread(target=self.stop, daemon=True).start()
+
+    def wait_stderr(self, timeout: float = 2.0) -> None:
+        """Let the stderr reader catch up after the process ends (for ``reason``)."""
+        self.stderr_done.wait(timeout)
 
     def stop(self) -> None:
-        if self.proc.poll() is None:
+        """SIGINT, then SIGTERM after ``stop_grace_s``, then SIGKILL; safe to call twice."""
+        with self._stop_lock:
+            self.stopping = True
+            if self.proc.poll() is not None:
+                return
             try:
                 self.proc.send_signal(signal.SIGINT)
-                self.proc.wait(10)
-            except (subprocess.TimeoutExpired, OSError, ValueError):
+                self.proc.wait(self.stop_grace_s)
+                return
+            except subprocess.TimeoutExpired:
+                pass
+            except (OSError, ValueError):
+                pass
+            try:
+                self.proc.terminate()
+                self.proc.wait(2)
+            except subprocess.TimeoutExpired:
                 self.proc.kill()
                 self.proc.wait()
+            except (OSError, ValueError):
+                pass
 
 
 class KiwiSource(BaseSource):
@@ -385,7 +463,8 @@ class KiwiSource(BaseSource):
             "--tlimit", str(int(s.session_max_s)),
             "--connect-retries", "1", "--connect-timeout", "10",
             "--busy-retries", "1", "-k", "30",
-            "--log", "warn",
+            # INFO shows kiwirecorder's in-process reconnect line (SESSION_END_PATTERNS).
+            "--log", KIWIRECORDER_LOG_LEVEL,
         ]
         if s.password:
             cmd += ["--pw", s.password]
@@ -430,8 +509,14 @@ class KiwiSource(BaseSource):
                 self._release()
                 raise SourceError(f"could not run kiwirecorder: {exc}") from exc
             session = KiwiSession(proc)
-            session.header_ready.wait(30)
-            if session.rate:
+            try:
+                session.header_ready.wait(30)
+            except BaseException:
+                # e.g. SIGINT while connecting: do not leave the process holding the slot
+                session.stop()
+                self._release()
+                raise
+            if session.rate and not session.session_end:
                 self.session = session
                 self._rate = session.rate
                 self._session_start = self._last_audio = self._clock()
@@ -442,8 +527,13 @@ class KiwiSource(BaseSource):
 
     def _session_failed(self, host: KiwiHost, session: KiwiSession) -> None:
         session.stop()
+        session.wait_stderr()
         self._release()
         reason = session.reason or "connect failed"
+        if session.session_end:
+            self._note(
+                f"{host}: kiwirecorder: {session.session_end!r}; process stopped (one session per process)"
+            )
         refusal = reason in ("too_busy", "ip_limit", "redirect", "bad_password", "kicked")
         seconds = self.settings.retire_after_refusal_s if refusal else self.settings.retire_after_failure_s
         self._retire(host, seconds, whole_host=refusal)
@@ -495,7 +585,8 @@ class KiwiSource(BaseSource):
                 host = self.current
                 self.session = None
                 ran = self._clock() - self._session_start
-                if session.reason or ran < 60:
+                session.wait_stderr()  # a session-end line may still be in the pipe
+                if session.reason or session.session_end or ran < 60:
                     self._session_failed(host, session)
                     self._backoff()
                 else:

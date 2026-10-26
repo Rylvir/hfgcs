@@ -141,6 +141,25 @@ The source runs `kiwirecorder.py --nc --nc-wav -m usb -f <dial> -L 300 -H 3000
 -u <ident> --tlimit 1320` as a subprocess and reads the WAV stream from its
 stdout. kiwiclient is **not vendored or imported** (see THIRD_PARTY.md).
 
+**One session per kiwirecorder process.** When a Kiwi ends a running session,
+kiwirecorder (checked against kiwiclient v1.11, commit `4eb733e`, `kiwi/worker.py`)
+logs `<host>:<port> server closed the connection cleanly. Reconnecting after 5 seconds`
+(or `unexpectedly`) at INFO and reconnects in the same process every 5 s with no
+limit; `--connect-retries` / `--busy-retries` do not cover that path, and the only
+switch that skips it (`--no-api`) also stops sending the ident and frequency. So
+the source runs kiwirecorder with `--log info`, reads its stderr continuously,
+and on the first in-process reconnect or redirect message (`server closed the
+connection`, `Reconnecting after N seconds`, `Redirecting to`, `sleeping and
+reconnecting`) stops it (SIGINT, SIGTERM after 2 s, before the 5 s reconnect).
+The session counts as failed for that host: a server-ended session is treated as
+being kicked (host retired 60 min) and the usual backoff applies. The `--tlimit`
+end and our own 22-min cap still release the slot normally, followed by the
+≥ 60 s rest.
+
+`hfgcs_scanner.py` exits 0 when stopped with SIGINT (systemd `KillSignal=SIGINT`),
+even if the unit's log pipe (`tee`) was stopped by the same signal first; real
+errors still exit non-zero.
+
 ### Etiquette rules implemented
 
 Adapted from `ETIQUETTE.md` in
@@ -159,6 +178,7 @@ Adapted from `ETIQUETTE.md` in
 | Blocklist always honoured | `blocklist` / `blocklist_file` |
 | A refusal is an answer | `too_busy`, `ip_limit`, redirect, bad password or being kicked: abandoned at once (`--busy-retries 1`, no retry loop), host retired 60 min |
 | No reconnect hammering | Any other failure retires that receiver 30 min; exponential backoff 30 s → 10 min with jitter |
+| One session per process | kiwirecorder's own in-process reconnect (after the server ends a session) or redirect is caught on stderr and the process stopped at once; it counts as a failed session for that host |
 | No waterfall | Audio only (`--nc`), so no second socket or extra bandwidth |
 
 Not implemented yet (open items): make-before-break rotation (we do

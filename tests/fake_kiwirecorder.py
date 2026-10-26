@@ -5,12 +5,20 @@ Behaviour is chosen by the server host name:
   dead.*      -> exits 1 without output (connect failure)
   stall.*     -> writes the WAV header, then no samples (stays connected for 30 s)
   zero.*      -> writes all-zero samples (a silent receiver)
+  kick.*      -> streams, then prints kiwiclient v1.11's in-process reconnect line
+                 ("<host>:<port> server closed the connection cleanly. Reconnecting after 5 seconds")
+                 and, like kiwirecorder, reconnects after $FAKE_KIWI_RECONNECT_S (default 5) s,
+                 logging ["RECONNECT", host] to $FAKE_KIWI_LOG
+  stubborn.*  -> like kick.*, but ignores SIGINT (so only SIGTERM stops it)
+  kickexit.*  -> streams, prints the "server closed the connection" line, then exits 0
+  redirect.*  -> streams, prints kiwiclient's redirect warning and keeps going (as if connected elsewhere)
   anything    -> writes a --nc-wav stream: 12 kHz mono, 1 kHz tone, $FAKE_KIWI_SECONDS long
 Every invocation's argv is appended to $FAKE_KIWI_LOG as one JSON line.
 """
 
 import json
 import os
+import signal
 import struct
 import sys
 
@@ -23,6 +31,8 @@ host = argv[argv.index("-s") + 1]
 if host.startswith("busy."):
     sys.stderr.write(f"ERROR: KiwiTooBusyError: {host}: all 4 client slots taken\n")
     sys.exit(1)
+if host.startswith("stubborn."):
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
 if host.startswith("dead."):
     sys.stderr.write("Failed to connect, giving up\n")
     sys.exit(1)
@@ -46,3 +56,25 @@ if host.startswith("zero."):
 for i in range(0, len(pcm), 600):
     out.write(pcm[i : i + 600].tobytes())
     out.flush()
+
+port = argv[argv.index("-p") + 1]
+if host.split(".")[0] in ("kick", "stubborn", "kickexit"):
+    msg = " Reconnecting after 5 seconds" if host.split(".")[0] != "kickexit" else ""
+    time.sleep(0.5)  # mid-session, after the stream has started
+    sys.stderr.write(f"{host}:{port} server closed the connection cleanly.{msg}\n")
+    sys.stderr.flush()
+    if host.startswith("kickexit."):
+        sys.exit(0)
+    time.sleep(float(os.environ.get("FAKE_KIWI_RECONNECT_S", "5")))
+    with open(os.environ["FAKE_KIWI_LOG"], "a") as fh:
+        fh.write(json.dumps(["RECONNECT", host]) + "\n")
+    out.write(pcm.tobytes())
+    out.flush()
+    time.sleep(30)
+elif host.startswith("redirect."):
+    sys.stderr.write(f"{host}:{port} Too busy now. Redirecting to other.example:8073\n")
+    sys.stderr.flush()
+    for _ in range(30):
+        out.write(pcm[:1200].tobytes())
+        out.flush()
+        time.sleep(1)
