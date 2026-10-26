@@ -23,13 +23,16 @@ openwebrx = ["websockets>=12"]
 # create the venv with --system-site-packages. kiwiclient is not on PyPI
 # either; KiwiSDR support will vendor or reference it when it lands.
 dev = ["pytest>=7", "ruff>=0.4", "websockets>=12"]
+# Speech-to-text for decoding/asr.py (CTranslate2 Whisper + silero VAD).
+# Also needs the ffmpeg binary on PATH (audio decode and preprocessing).
+asr = ["faster-whisper>=1.1"]
 
 [project.scripts]
 hfgcs-scanner = "hfgcs_scanner:main"
 hfgcs-waterfall = "hfgcs_waterfall:main"
 
 [tool.setuptools]
-packages = ["hfgcs"]
+packages = ["hfgcs", "decoding"]
 py-modules = ["hfgcs_scanner", "hfgcs_waterfall"]
 
 [tool.pytest.ini_options]
