@@ -232,3 +232,14 @@ def test_scanner_uses_only_one_channel_on_a_kiwi(tmp_path):
     assert sc.start() == [4724.0]
     assert "one channel at a time" in sc.refused[11175.0]
     sc.close()
+
+
+@pytest.mark.parametrize("ident", ["HFGCS-Monitor", "hfgcs-monitor", "HFGCS-MONITOR", " HFGCS-Monitor "])
+def test_accepts_hfgcs_monitor_ident(ident):
+    make(["a.example:8073"], ident=ident).check_authorised()
+
+
+@pytest.mark.parametrize("ident", ["", "   ", "changeme", "CHANGEME", "hfgcs", "your-callsign"])
+def test_rejects_placeholder_idents(ident):
+    with pytest.raises(SourceError, match="ident"):
+        make(["a.example:8073"], ident=ident).check_authorised()
