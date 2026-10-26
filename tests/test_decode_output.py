@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from decoding import parse_transcript, tokenize
+from decoding import __version__, parse_transcript, tokenize
 from decoding.output import BROADCAST_TYPES, broadcast_id, build_document
 from decoding.pipeline import DecodeConfig, Decoder, decoder_version
 from decoding.run import decode_recording, iter_inputs, recording_section, sidecar_path
@@ -201,7 +201,8 @@ def test_top_level_fields_and_versions():
     assert list(doc)[:7] == ["schema_version", "decoder_version", "recording", "duration_s", "decoded_at",
                              "asr", "broadcasts"]  # fmt: skip
     cfg = DecodeConfig()
-    assert doc["decoder_version"] == f"decoding/0.2.0;parser=0.2;asr={cfg.asr.key()};second_pass=vote3@0.3"
+    want = f"decoding/{__version__};parser=0.2;asr={cfg.asr.key()};second_pass=vote3@0.3"
+    assert doc["decoder_version"] == want
     assert doc["asr"]["decoder_version"] == doc["decoder_version"]
     assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", doc["decoded_at"])
     assert decoder_version(DecodeConfig(second_pass=False)).endswith(";second_pass=off")

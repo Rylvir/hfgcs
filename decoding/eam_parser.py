@@ -94,14 +94,33 @@ def _dedupe_repeat(words: list[str]) -> list[str]:
     return words
 
 
+# Procedure words that end a callsign / addressee phrase besides _MARKERS
+# ("This is FAKECALL, radio check" must give FAKECALL, not FAKECALL RADIO CHECK).
+_NAME_STOP_WORDS = {"break", "over", "roger", "testing", "radiocheck", "copy", "standing"}
+_NAME_STOP_PHRASES = (
+    ("radio", "check"),
+    ("in", "the", "blind"),
+    ("how", "copy"),
+    ("how", "do", "you", "read"),
+)
+
+
+def _stops_name(toks: Sequence[Token], i: int) -> bool:
+    n = toks[i].norm
+    if n in _MARKERS or n in _NAME_STOP_WORDS:
+        return True
+    return any(tuple(t.norm for t in toks[i : i + len(ph)]) == ph for ph in _NAME_STOP_PHRASES if ph[0] == n)
+
+
 def _phrase(toks: Sequence[Token], start: int, allow_chars: bool = False) -> tuple[list[Token], int]:
-    """Collect name words from ``start`` until a procedure marker or a
+    """Collect name words from ``start`` until a procedure word or phrase
+    (``_MARKERS``, ``_NAME_STOP_WORDS``, ``_NAME_STOP_PHRASES``) or a
     character token. Returns (tokens, next index)."""
     out = []
     i = start
     while i < len(toks):
         t = toks[i]
-        if t.norm in _MARKERS or (not allow_chars and token_chars(t) is not None):
+        if _stops_name(toks, i) or (not allow_chars and token_chars(t) is not None):
             break
         out.append(t)
         i += 1
