@@ -6,6 +6,7 @@ from decoding.evaluate import (
     best_eam,
     load_subset,
     masked_edit_distance,
+    predicted_type,
     score_clip,
 )
 from decoding.snap import snap_word, snap_words, sound_key
@@ -85,9 +86,21 @@ def test_score_and_aggregate():
     assert miss["cer"] == 1.0 and miss["detected"] is False
     neg = score_clip(_label(typ="radio_check"), recs)
     assert neg["false_eam"] is True
+    assert good["type_hyp"] == "eam" and good["type_match"] and not neg["type_match"]
     agg = aggregate([good, miss, neg])
     assert agg["cer_micro"] == 0.5 and agg["n_eam"] == 2 and agg["false_eam"] == 1
     assert baseline_machine([_label()])["cer_micro"] == 0.2
+    assert agg["type_acc"] == 1 / 3  # good matches; miss (no EAM found) and neg do not
+
+
+def test_predicted_type_uses_broadcast_type_names():
+    assert predicted_type([{"type": "radio_check"}]) == "radio_check"
+    assert predicted_type([{"type": "other"}]) == "other"
+    assert predicted_type([{"type": "skyking"}, {"type": "eam", "body": ""}]) == "skyking"
+    rc = score_clip(_label(typ="radio_check"), [{"type": "radio_check"}])
+    assert rc["type_match"] and not rc["false_eam"]
+    auth = score_clip(_label(typ="auth"), [{"type": "other"}])
+    assert auth["type_match"]
 
 
 def test_load_subset_filters(tmp_path):

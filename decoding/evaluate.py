@@ -133,10 +133,29 @@ def best_eam(records: list[dict]) -> Optional[dict]:
     return max(eams, key=lambda r: len(r["body"])) if eams else None
 
 
+# labels.jsonl types -> the parser's broadcast types (eam, skyking,
+# radio_check, other). missileer's auth / traffic grades have no parser type.
+LABEL_TO_BROADCAST_TYPE = {"eam": "eam", "skyking": "skyking", "radio_check": "radio_check"}
+
+
+def predicted_type(records: list[dict]) -> str:
+    """The clip's type as the parser sees it: an EAM with a body wins, then
+    Skyking, then radio_check, else other."""
+    types = {r.get("type") for r in records}
+    if best_eam(records):
+        return "eam"
+    for t in ("skyking", "radio_check"):
+        if t in types:
+            return t
+    return "other"
+
+
 def score_clip(label: dict, records: list[dict]) -> dict:
     lab = label["labels"]
     rec = best_eam(records)
     out = {"id": label["id"], "type": label["type"], "status": label["label_status"]}
+    out["type_hyp"] = predicted_type(records)
+    out["type_match"] = out["type_hyp"] == LABEL_TO_BROADCAST_TYPE.get(label["type"], "other")
     if label["type"] == "eam" and lab.get("body"):
         ref = lab["body"]
         hyp = rec["body"] if rec else ""
@@ -166,6 +185,7 @@ def score_clip(label: dict, records: list[dict]) -> dict:
 def aggregate(rows: list[dict]) -> dict:
     e = [r for r in rows if "cer" in r]
     neg = [r for r in rows if "false_eam" in r]
+    typed = [r for r in rows if "type_match" in r]
 
     def rate(key):
         vals = [r[key] for r in e if r.get(key) is not None]
@@ -186,6 +206,7 @@ def aggregate(rows: list[dict]) -> dict:
         "detected": sum(r["detected"] for r in e) / len(e) if e else None,
         "n_neg": len(neg),
         "false_eam": sum(r["false_eam"] for r in neg),
+        "type_acc": (sum(r["type_match"] for r in typed) / len(typed)) if typed else None,
     }
 
 

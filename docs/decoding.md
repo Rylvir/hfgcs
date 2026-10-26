@@ -9,7 +9,8 @@ Code that exists today (prototype, stdlib only, branch `decoding-design`):
 | Path | What |
 |---|---|
 | `decoding/tokens.py` | ASR word tokens, NATO/ICAO + HF variants (niner, tree, fife) to characters, spoken numbers |
-| `decoding/eam_parser.py` | Grammar parser: `parse_transcript`, `parse_eam`, `parse_skyking`, segmentation, test counts |
+| `decoding/eam_parser.py` | Grammar parser: `parse_transcript`, `parse_eam`, `parse_skyking`, segmentation, radio checks (test counts) |
+| `decoding/output.py`, `decoding/run.py` | Per-recording decode document and its writer, `python -m decoding.run` (see "Decode output") |
 | `decoding/align.py` | Read 1 / read 2 alignment and per-character consensus confidence |
 | `decoding/rebroadcast.py` | Links airings of one message across time, frequency and receiver |
 | `decoding/metrics.py` | CER, field exact-match, detection precision/recall |
@@ -28,7 +29,7 @@ PCM_16 mono at 8 kHz), `sha256`, `audio_rate`, `duration_sec`, `preroll_sec`, `s
 The decoder is a separate worker. It never touches the capture process.
 
 1. It tails the catalog. Each entry is keyed by `sha256`, so re-runs are idempotent.
-2. It writes one sidecar per recording, `<wav>.decode.json`, containing `{recording: <catalog entry>, asr: {...}, broadcasts: [<parser records>]}`. It also appends a line to `decodes.jsonl`. The Database & Analytics lead ingests both into `transcripts` / `messages` / `message_airings`.
+2. It writes one sidecar per recording, `<wav>.decode.json`, and appends the identical document as one line to `decodes.jsonl` (`python -m decoding.run`; format in "Decode output" below and `docs/decode.schema.json`). The Database & Analytics lead loads both with `hfgcs_db.py load-decodes`.
 3. Absolute times are computed as `file_start_utc + word.start`. This matches missileer's `voice_onset` basis.
 4. Entries with `truncated: true` are parsed, but the parser is expected to flag them as `partial_start`/`single_read`.
 
@@ -202,7 +203,7 @@ evaluate process is about 1.7 GB. `vad_t10_pad` was stopped at 10/14 gold clips 
 
 **Second pass: 3-way character vote (`vote.py`, config `best_vote` = `default`; on by default since 2026-10-26,
 turn it off with `DecodeConfig(second_pass=False)`).**
-- *Trigger* (`vote.needs_second_pass`): the first-pass EAM's `confidence.reads_agree_ratio < 0.3`, which includes
+- *Trigger* (`vote.needs_second_pass`): the first-pass EAM's `confidence_detail.reads_agree_ratio < 0.3`, which includes
   every single-read EAM. Clips with no EAM body (radio checks, noise) never trigger. Structural flags were tried as
   the trigger, but `single_read`/`length_mismatch` are on about 85 % of current first passes, so they select nothing.
 - *Second pass*: decode again with `no_vad_snap` and `baseline` (VAD on, cheap). Each body is aligned to the
@@ -329,7 +330,8 @@ Community notes (scout digest, unverified here): Skyking has been dormant for ye
 ### Grammar (tolerant FSM over normalised tokens)
 ```
 recording   := noise* (broadcast noise*)*
-broadcast   := eam | skyking | test_count
+broadcast   := eam | skyking | radio_check | other
+radio_check := THIS IS callsign [WITH A] TEST COUNT digits… [THIS IS callsign OUT]   # HFGCS test count
 eam         := ALL STATIONS{1,2} THIS IS callsign{1,2}
                (FOR addressee){0,2}
                (char{6} STANDBY){1,3}                      # preamble x3
@@ -342,7 +344,7 @@ skyking     := (SKYKING{1,2} [DO NOT ANSWER] codeword{1,2} TIME digit digit AUTH
                [I SAY AGAIN <same>] THIS IS callsign OUT
 char        := NATO word | digit word | numeral | single letter
 ```
-Segmentation: a new broadcast starts at "all stations" or "skyking" only after the previous one has closed ("out" or "more to follow"), so the Skyking repeat after "I say again" is not split off. Every deviation is a **flag**, not an exception. These include a missing header (`partial_start`), a clip that began inside the message itself (`mid_message_start`, see below), `single_read`, `missing_preamble`, `preamble_reads_disagree`, `reads_disagree`, `length_mismatch`, `declared_length_conflict`, `preamble_body_mismatch`, `non_character_words_in_body`, `closing_callsign_mismatch`, `invalid_time`, and others.
+Segmentation: a new broadcast starts at "all stations" or "skyking" only after the previous one has closed ("out" or "more to follow"), so the Skyking repeat after "I say again" is not split off. A radio check ("this is X … test count" within 8 words) after a closed broadcast also starts one. Record types are `eam`, `skyking`, `radio_check` and `other` (nothing recognisable), the names `labels.jsonl` uses; until parser schema 0.2 they were `test_count` and `unknown`. Every deviation is a **flag**, not an exception. These include a missing header (`partial_start`), a clip that began inside the message itself (`mid_message_start`, see below), `single_read`, `missing_preamble`, `preamble_reads_disagree`, `reads_disagree`, `length_mismatch`, `declared_length_conflict`, `preamble_body_mismatch`, `non_character_words_in_body`, `closing_callsign_mismatch`, `invalid_time`, and others.
 
 ### Per-character confidence
 Read 1 and read 2 are aligned with Levenshtein (`align.py`). Each column then gets:
@@ -369,27 +371,69 @@ Within a group, each airing gets a relation:
 
 The group id is `eam-<first UTC>-<first 6 chars>`. NEET INTEL reports that about 1 in 3 EAMs is rebroadcast, mostly within 2 h. Linking by preamble alone fails, because messages that share a preamble exist (the scout digest's 56HETY ×9). That is why we compare full bodies.
 
-### Output JSON schema (v0.1; one record per broadcast)
+### Parser record schema (v0.2; one record per broadcast)
 ```jsonc
 {
-  "type": "eam" | "skyking" | "test_count" | "unknown",
-  "schema_version": "0.1",
+  "type": "eam" | "skyking" | "radio_check" | "other",
+  "schema_version": "0.2",
+  // common to all types (v0.2)
+  "callsign": "MAINSAIL" | null,          // identifying station: closing "this is X", else the opening one
+  "callsigns_all": [{"callsign": "MAINSAIL", "role": "opening" | "closing" | "addressee" | "station"}],
+  "confidence": 0.97,                     // 0-1, see below
+  "confidence_detail": {...},             // the per-type structure (v0.1's "confidence" for EAMs)
   // EAM
-  "callsign": "MAINSAIL", "callsign_confidence": 0.93, "addressee": "RED DOG" | null,
+  "opening_callsign": "MAINSAIL", "opening_callsign_confidence": 0.93, "addressee": "RED DOG" | null,
   "preamble": "QKR4TZ", "preamble_reads": ["QKR4TZ", "QKR4TZ", "QKR4TZ"],
   "declared_length": 30 | null, "length_source": "announced" | "default", "expected_length": 30,
   "read1": "…", "read2": "…", "body": "…", "body_masked": "QKR4TZ7H.B2…", "body_length": 30,
   "chars": [{"char": "Q", "confidence": 0.998, "read1": "Q", "read2": "Q", "agree": true, "preamble": "Q"}],
-  "confidence": {"mean": 0.97, "min": 0.41, "low_count": 1, "reads_agree_ratio": 0.967},
+  "confidence_detail": {"mean": 0.97, "min": 0.41, "low_count": 1, "reads_agree_ratio": 0.967},
   "timing": {"read1": {"start_sec": 74.1, "end_sec": 140.2}, "read2": {"start_sec": 145.0, "end_sec": 211.7}},
   "closing_callsign": "MAINSAIL", "out": true, "more_to_follow": false, "disregard": false,
-  // Skyking: each field = {"value", "read1", "read2", "agree", "confidence"}
+  // Skyking: each field = {"value", "read1", "read2", "agree", "confidence"}; also closing_callsign
   "codeword": {...}, "time": {...}, "authentication": {...},
+  // other: "text"
   "flags": ["reads_disagree"],
-  "segment": {"token_start": 0, "token_end": 212, "start_sec": 31.0, "end_sec": 215.3}
+  "segment": {"token_start": 0, "token_end": 212, "start_sec": 31.0, "end_sec": 215.3,
+              "word_start": 0, "word_end": 230}   // inclusive input (ASR) word indices
 }
 ```
-The sidecar wraps these records with the recording entry and ASR provenance (`model`, `compute_type`, prompt hash, VAD parameters). We will publish a formal JSON Schema file (`docs/schemas/broadcast.schema.json`) once v0.1 stabilises.
+`confidence` per type: EAM = mean per-character body confidence (`confidence_detail.mean`); Skyking = the minimum
+of the codeword, time and authentication confidences (`confidence_detail` = those three); `radio_check`/`other` =
+mean ASR word probability of the broadcast's words (`confidence_detail = {mean_word_prob, n_words}`; words
+rewritten by `snap_words` count at their halved probability). The parser keeps each token's source word range
+(`Token.src`), so `segment.word_start/word_end` map a broadcast back to the ASR words even when tokens were split
+("Alpha,Bravo"), joined ("X ray", "I say again") or dropped (repetition loops).
+
+## Decode output (contract v1 with Database & Analytics, 2026-10-26)
+
+`python -m decoding.run <catalog.jsonl | audio …>` (or `decoding.run.decode_recording`) decodes each recording
+with the default `Decoder` and writes `<audio>.decode.json` next to it, plus the **identical** document as one
+compact line of `decodes.jsonl` (beside the catalog or the first audio file; `--jsonl`, `--no-jsonl`). A sidecar
+with the same sha256 and `decoder_version` is skipped (`--force` re-decodes). `--asr-cache DIR` reuses
+`decoding.evaluate`'s cache layout. JSON Schema: `docs/decode.schema.json`. Sample:
+`tests/fixtures/decode_sample_two_broadcasts.decode.json` (a real decode of two concatenated gold clips).
+
+| Field | Meaning |
+|---|---|
+| `schema_version` | document schema, `"1.0"` |
+| `decoder_version` | `decoding/<decoding.__version__>;parser=<parser schema>;asr=<AsrConfig.key()>;second_pass=vote3@0.3\|off` (also mirrored in `asr.decoder_version`) |
+| `recording` | `path` and `sha256` of the file decoded, then every Phase 0 schema-2 catalog field verbatim (`start_utc`, `file_start_utc`, `end_utc`, `frequency_khz`, `mode`, `receiver_id`, `file`, `audio_rate`, `duration_sec`, `preroll_sec`, `snr_db_peak`, `snr_db_mean`, `noise_floor_db`, `truncated`, `notes`). A catalog sha256 that differs from the file is kept as `catalog_sha256`. Bare audio gets `file` = `path`. |
+| `duration_s` | decoded audio length (s) |
+| `decoded_at` | ISO 8601 UTC, whole seconds, trailing `Z` |
+| `asr` | `model`, `compute_type`, `config_key`, `day_callsigns`, `duration_s`, `asr_seconds`, `text`; `words` = first-pass words `{word, start, end, probability[, snapped_to]}`; `segments` = `{start, end, text, avg_logprob, no_speech_prob, word_span}`; `first_pass` = `{config_key, model, compute_type, asr_seconds}`; `second_pass` = `{mode, enabled, threshold, configs[{config_key, overrides, snap}], fired, passes, asr_seconds, second_pass_asr_seconds}` |
+| `broadcasts[]` | parser records with these fields first: |
+| `broadcast_id` | `<sha256[:12]>@<start_s rounded to 0.1>`, e.g. `068ccac7a46b@0.7`. If two broadcasts of one recording would collide, `#2`, `#3` is appended (never seen). |
+| `type` | `eam` \| `skyking` \| `radio_check` \| `other` |
+| `start_s`, `end_s` | seconds from the start of the audio file (first/last word of the broadcast); always numbers (0.0 for an empty transcript) |
+| `asr_word_span` | inclusive `[i, j]` into `asr.words`; null only when there are no words |
+| `transcript` | that broadcast's own ASR words, `" ".join(asr.words[i..j].word)` |
+| `callsign`, `callsigns_all` | see the parser schema above |
+| `confidence`, `confidence_detail` | 0-1 float, and the per-type structure |
+
+All times are file-relative; absolute time = `recording.file_start_utc + start_s`. When `recording.truncated` is
+true the last broadcast also gets the flag `truncated`. Timings and word spans always refer to the **first** ASR
+pass: the second-pass vote only replaces `body` (keeping `body_first_pass`), so spans stay valid.
 
 ## 3. Labelled evaluation set
 
@@ -472,6 +516,7 @@ Ear-checked labels will add `labelled_by`, `labelled_at`, `ear_notes`, and for S
 Negative examples (`type: radio_check | traffic | noise | phone_patch`) are included for detection evaluation.
 
 ### Metrics (`decoding/metrics.py`, `decoding/evaluate.py`; report per model/config, per receiver, per SNR bin)
+- **Type accuracy** (`type_acc`, `evaluate.predicted_type`): the clip's parsed type (EAM with a body, else Skyking, else `radio_check`, else `other`) against the label type; label types without a parser type (`auth`, `traffic`) count as `other`.
 - **Body CER** (`evaluate.masked_edit_distance`): edit distance against the gold body divided by its length. A `.` in the label (unheard) matches any character at zero cost. We report micro CER (total edits divided by total reference characters) and the median per clip. Reported for the consensus body, for each read separately, and for missileer's machine copy as a baseline.
 - **Field exact-match:** callsign, addressee, preamble, declared length, and the Skyking codeword/time/authentication.
 - **Callsign accuracy**: exact match after normalisation, and a top-1 match against the day's callsign list.

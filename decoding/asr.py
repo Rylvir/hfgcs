@@ -280,16 +280,20 @@ class Transcriber:
                 **self._decode_kwargs(day_callsigns),
             )
             segs_out = [(0.0, s) for s in segs]
-        words = [
-            {
-                "word": w.word.strip(),
-                "probability": round(w.probability, 4),
-                "start": round(w.start + off + offset_s, 2),
-                "end": round(w.end + off + offset_s, 2),
-            }
-            for off, s in segs_out
-            for w in (s.words or [])
-        ]
+        words, spans = [], []
+        for off, s in segs_out:
+            first = len(words)
+            words += [
+                {
+                    "word": w.word.strip(),
+                    "probability": round(w.probability, 4),
+                    "start": round(w.start + off + offset_s, 2),
+                    "end": round(w.end + off + offset_s, 2),
+                }
+                for w in (s.words or [])
+            ]
+            # Inclusive index range of this segment's words in ``words``.
+            spans.append([first, len(words) - 1] if len(words) > first else None)
         return {
             "model": c.model,
             "compute_type": c.compute_type,
@@ -303,8 +307,9 @@ class Transcriber:
                     "avg_logprob": s.avg_logprob,
                     "no_speech_prob": s.no_speech_prob,
                     "text": s.text,
+                    "word_span": span,
                 }
-                for off, s in segs_out
+                for (off, s), span in zip(segs_out, spans, strict=True)
             ],
         }
 

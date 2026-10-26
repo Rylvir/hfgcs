@@ -96,8 +96,9 @@ def test_eam_double_read_agreement():
     assert r["body"] == BODY
     assert r["read1"] == r["read2"] == BODY
     assert r["expected_length"] == 30 and r["length_source"] == "default"
-    assert r["confidence"]["reads_agree_ratio"] == 1.0
-    assert r["confidence"]["low_count"] == 0
+    assert r["confidence_detail"]["reads_agree_ratio"] == 1.0
+    assert r["confidence_detail"]["low_count"] == 0
+    assert r["confidence"] == r["confidence_detail"]["mean"]
     assert all(c["agree"] for c in r["chars"])
     assert r["out"] and r["closing_callsign"] == "MAINSAIL"
     assert r["flags"] == []
@@ -142,7 +143,7 @@ def test_mismatched_reads_lower_confidence_and_flag():
     assert not c["agree"] and {c["read1"], c["read2"]} == {BODY[10], "W"}
     assert c["confidence"] < 0.5
     assert r["body_masked"][10] == "."
-    assert r["confidence"]["low_count"] == 1
+    assert r["confidence_detail"]["low_count"] == 1
     others = [x["confidence"] for i, x in enumerate(r["chars"]) if i != 10]
     assert min(others) > 0.99
 
@@ -248,7 +249,7 @@ def test_truncated_after_first_read():
 )
 def test_malformed_input(text, flag):
     r = parse_transcript(text)
-    assert len(r) == 1 and r[0]["type"] == "unknown" and flag in r[0]["flags"]
+    assert len(r) == 1 and r[0]["type"] == "other" and flag in r[0]["flags"]
 
 
 def test_garbled_header_does_not_crash():
@@ -257,12 +258,13 @@ def test_garbled_header_does_not_crash():
     assert "empty_body" in r["flags"] and "missing_callsign" in r["flags"]
 
 
-def test_test_count():
+def test_test_count_is_radio_check():
     r = parse_transcript(
         "This is Mainsail with a test count. Testing one two three four five, "
         "five four three two one. This is Mainsail, out."
     )[0]
-    assert r["type"] == "test_count" and r["callsign"] == "MAINSAIL"
+    assert r["type"] == "radio_check" and r["callsign"] == "MAINSAIL"
+    assert r["callsigns_all"] == [{"callsign": "MAINSAIL", "role": "station"}]
 
 
 # ------------------------------------------------------------ tokens / metrics / rebroadcast
@@ -384,9 +386,9 @@ def test_unstructured_long_char_run_is_parsed_headless():
     assert r[0]["type"] == "eam" and r[0]["body"] == BODY
 
 
-def test_short_char_run_stays_unknown():
+def test_short_char_run_stays_other():
     r = parse_transcript("radio check Alpha Bravo one two over")
-    assert r[0]["type"] == "unknown"
+    assert r[0]["type"] == "other"
 
 
 # ---- mid-message start detection

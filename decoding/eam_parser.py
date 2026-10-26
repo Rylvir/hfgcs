@@ -1,4 +1,7 @@
-"""Grammar-driven parser for HFGCS one-way broadcasts (EAM, Skyking, test count).
+"""Grammar-driven parser for HFGCS one-way broadcasts (EAM, Skyking, radio check).
+
+Record types: ``eam``, ``skyking``, ``radio_check`` (test count / radio check)
+and ``other`` (no recognisable procedure), the same names as labels.jsonl.
 
 Procedure per Priyom, https://priyom.org/military-stations/united-states/hfgcs:
 
@@ -28,9 +31,9 @@ from typing import Optional, Sequence
 
 from .align import CharObs, consensus
 from .metrics import edit_distance
-from .tokens import Token, TokenInput, parse_number, token_chars, tokenize
+from .tokens import Token, TokenInput, parse_number, src_span, token_chars, tokenize
 
-SCHEMA_VERSION = "0.1"
+SCHEMA_VERSION = "0.2"
 DEFAULT_EAM_LENGTH = 30
 PREAMBLE_LENGTH = 6
 LOW_CONFIDENCE = 0.5
@@ -217,8 +220,8 @@ def parse_eam(transcript: TokenInput) -> dict:
     else:
         flags.append("missing_callsign")
         i_this = -1
-    rec["callsign"] = _name(callsign_toks)
-    rec["callsign_confidence"] = _mean_prob(callsign_toks)
+    rec["opening_callsign"] = _name(callsign_toks)
+    rec["opening_callsign_confidence"] = _mean_prob(callsign_toks)
 
     # 2. optional addressee: "for X, for X"
     addr_toks: list[Token] = []
@@ -373,7 +376,7 @@ def parse_eam(transcript: TokenInput) -> dict:
             "body_masked": "".join(c.char if c.confidence >= LOW_CONFIDENCE else "." for c in cons),
             "body_length": len(body),
             "chars": [c.to_dict() for c in cons],
-            "confidence": {
+            "confidence_detail": {
                 "mean": round(statistics.fmean(confs), 3) if confs else 0.0,
                 "min": min(confs) if confs else 0.0,
                 "low_count": sum(c < LOW_CONFIDENCE for c in confs),
@@ -386,8 +389,12 @@ def parse_eam(transcript: TokenInput) -> dict:
         }
     )
     rec.update(_closing(toks, n, b1_start if i_again < 0 else b2_start))
-    if rec["callsign"] and rec["closing_callsign"] and rec["callsign"] != rec["closing_callsign"]:
+    opening, closing = rec["opening_callsign"], rec["closing_callsign"]
+    if opening and closing and opening != closing:
         flags.append("closing_callsign_mismatch")
+    _set_callsigns(rec, [(opening, "opening"), (rec["addressee"], "addressee"), (closing, "closing")])
+    # Overall confidence: mean per-character body confidence (0 when no body).
+    rec["confidence"] = rec["confidence_detail"]["mean"]
     rec["flags"] = flags
     return rec
 
@@ -482,32 +489,72 @@ def parse_skyking(transcript: TokenInput) -> dict:
     if a is not None and len(a) != 2:
         flags.append("invalid_authentication")
     rec.update(_closing(toks, n, end_all))
-    rec["callsign"] = rec.pop("closing_callsign")
+    _set_callsigns(rec, [(rec["closing_callsign"], "closing")])
+    # Overall confidence: the weakest of the three fields (a Skyking is only as
+    # usable as its least certain field).
+    detail = {f: rec[f]["confidence"] for f in ("codeword", "time", "authentication")}
+    rec["confidence_detail"] = detail
+    rec["confidence"] = min(detail.values())
     rec["flags"] = flags
     return rec
 
 
 # ---------------------------------------------------------------- dispatcher
-def _parse_test_count(toks: list[Token], n: list[str]) -> dict:
+def _word_confidence(rec: dict, toks: Sequence[Token]) -> dict:
+    """radio_check / other: overall confidence = mean ASR word probability of
+    the broadcast's tokens (snapped words count at their halved probability)."""
+    mean = _mean_prob(toks)
+    rec["confidence"] = mean
+    rec["confidence_detail"] = {"mean_word_prob": mean, "n_words": len(toks)}
+    return rec
+
+
+def _parse_radio_check(toks: list[Token], n: list[str]) -> dict:
     i = _find(n, ["this", "is"])
     words, _ = _phrase(toks, i + 2) if i >= 0 else ([], 0)
-    return {
-        "type": "test_count",
+    rec = {
+        "type": "radio_check",
         "schema_version": SCHEMA_VERSION,
-        "callsign": _name(words),
         "flags": [] if i >= 0 else ["missing_callsign"],
     }
+    _set_callsigns(rec, [(_name(words), "station")])
+    return _word_confidence(rec, toks)
+
+
+def _other(toks: list[Token], flag: str) -> dict:
+    rec = {
+        "type": "other",
+        "schema_version": SCHEMA_VERSION,
+        "text": " ".join(t.text for t in toks),
+        "flags": [flag],
+    }
+    _set_callsigns(rec, [])
+    return _word_confidence(rec, toks)
+
+
+def _is_radio_check(n: list[str]) -> bool:
+    """HFGCS radio check = a test count ("... test count, one two three ...")."""
+    return _find(n, ["test", "count"]) >= 0
 
 
 def _segment(n: list[str]) -> list[int]:
     """Start index of each broadcast in a recording. A new broadcast starts at
     "all stations" or "skyking" only after the previous one closed ("out" /
-    "more to follow"), so the Skyking repeat after "I say again" stays put."""
+    "more to follow"), so the Skyking repeat after "I say again" stays put.
+    A radio check ("this is X [with a] test count") after a closed broadcast
+    starts one too."""
     starts: list[int] = []
     closed = True
     i = 0
     while i < len(n):
         is_start = n[i : i + 2] == ["all", "stations"] or n[i] == "skyking"
+        if closed and starts and n[i : i + 2] == ["this", "is"]:
+            is_start = _find(n, ["test", "count"], i + 2, min(len(n), i + 2 + RADIO_CHECK_LOOKAHEAD)) >= 0
+            if is_start:
+                starts.append(i)
+                closed = False
+                i += 2
+                continue
         if is_start and closed:
             starts.append(i)
             closed = False
@@ -521,6 +568,17 @@ def _segment(n: list[str]) -> list[int]:
 
 
 UNSTRUCTURED_MIN_CHARS = 12
+RADIO_CHECK_LOOKAHEAD = 8  # "this is <callsign words> with a test count"
+
+
+def _set_callsigns(rec: dict, found: Sequence[tuple[Optional[str], str]]) -> None:
+    """``callsigns_all`` = every callsign heard, as ``{callsign, role}``; the
+    single ``callsign`` is the station identifying itself: the closing
+    "this is X" (EAM, Skyking), else the opening one, else the radio-check
+    station. The addressee ("for X") is never the ``callsign``."""
+    rec["callsigns_all"] = [{"callsign": c, "role": role} for c, role in found if c]
+    by_role = {d["role"]: d["callsign"] for d in rec["callsigns_all"]}
+    rec["callsign"] = next((by_role[r] for r in ("closing", "opening", "station") if r in by_role), None)
 
 
 def _longest_char_run(toks: Sequence[Token]) -> int:
@@ -558,15 +616,31 @@ def mid_message_start_kind(rec: dict) -> Optional[str]:
     return "read2_only" if len(rec.get("read1") or "") < MID_START_MIN_READ1 else "in_read1"
 
 
+def _segment_info(toks: Sequence[Token], s: int, e: int) -> dict:
+    """Token range [s, e) of one broadcast, its time span, and the inclusive
+    range of *input* word indices (ASR words) it was built from."""
+    span = src_span(*toks[s:e])
+    return {
+        "token_start": s,
+        "token_end": e,
+        **_time_span(toks[s:e]),
+        "word_start": span[0] if span else None,
+        "word_end": span[1] if span else None,
+    }
+
+
 def parse_transcript(transcript: TokenInput) -> list[dict]:
     """Split a recording's transcript into broadcasts and parse each one.
-    Always returns a list; unrecognised audio yields one ``unknown`` record."""
+    Always returns a list; unrecognised audio yields one ``other`` record.
+    Every record has a ``segment`` whose ``word_start``/``word_end`` index the
+    input words (inclusive), so a writer can map it back to the ASR output."""
     toks = tokenize(transcript)
     n = _norms(toks)
     if not toks:
-        return [
-            {"type": "unknown", "schema_version": SCHEMA_VERSION, "text": "", "flags": ["empty_transcript"]}
-        ]
+        rec = _other([], "empty_transcript")
+        rec["segment"] = {"token_start": 0, "token_end": 0, "start_sec": None, "end_sec": None}
+        rec["segment"].update(word_start=None, word_end=None)
+        return [rec]
     starts = _segment(n)
     if not starts or starts[0] > 0:
         # Recording may start mid-message.
@@ -574,28 +648,23 @@ def parse_transcript(transcript: TokenInput) -> list[dict]:
         head = n[:head_end]
         if any(w in head for w in ("standby", "sayagain", "complete", *_FOLLOWS)) or "sayagain" in head:
             starts = [0] + starts
-        elif _find(head, ["test", "count"]) >= 0:
+        elif _is_radio_check(head):
             starts = [0] + starts
         elif not starts and _longest_char_run(toks) >= UNSTRUCTURED_MIN_CHARS:
             # No procedure words survived ASR, but a long run of characters
             # did: parse as a headless EAM so the body is not lost.
             starts = [0]
         elif not starts:
-            return [
-                {
-                    "type": "unknown",
-                    "schema_version": SCHEMA_VERSION,
-                    "text": " ".join(t.text for t in toks),
-                    "flags": ["no_procedure_markers"],
-                }
-            ]
+            rec = _other(toks, "no_procedure_markers")
+            rec["segment"] = _segment_info(toks, 0, len(toks))
+            return [rec]
     out = []
     for s, e in zip(starts, starts[1:] + [len(toks)], strict=True):
         seg, segn = toks[s:e], n[s:e]
         if "skyking" in segn[:3]:
             rec = parse_skyking(seg)
-        elif _find(segn, ["test", "count"]) >= 0 and _find(segn, ["message"]) < 0:
-            rec = _parse_test_count(seg, segn)
+        elif _is_radio_check(segn) and _find(segn, ["message"]) < 0:
+            rec = _parse_radio_check(seg, segn)
         else:
             rec = parse_eam(seg)
             if s == 0 and n[:2] != ["all", "stations"]:
@@ -604,6 +673,6 @@ def parse_transcript(transcript: TokenInput) -> list[dict]:
                 if kind:
                     rec["flags"].append("mid_message_start")
                     rec["mid_message_start"] = kind
-        rec["segment"] = {"token_start": s, "token_end": e, **_time_span(seg)}
+        rec["segment"] = _segment_info(toks, s, e)
         out.append(rec)
     return out
