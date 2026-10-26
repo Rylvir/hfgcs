@@ -106,6 +106,14 @@ Each recording is a 16-bit WAV in `recordings/` plus one JSON line in
 
 Recordings and the JSONL log are structured for easy review or contribution to projects like NEET INTEL.
 
+## Review app and public page
+- `python -m hfgcs.review_app serve`: the **private**, LAN-only review UI on port 8090. Listen to
+  recordings, correct transcripts, mark gold labels, and export them as JSONL for Decoding.
+- `python -m hfgcs.static_site`: the **public** static project page (`public_site/`) on port 8091, for
+  the hfgcs.scanplacer.com tunnel.
+
+See [docs/review-ui.md](docs/review-ui.md) for configuration, security and the systemd units in `deploy/`.
+
 ## License
 
 MIT, see [LICENSE](LICENSE). If Apache-2.0 code (for example from

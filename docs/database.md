@@ -8,6 +8,8 @@ In the repo (commit `55fe420`), `hfgcs_scanner.py` writes `recordings/HFGCS_<kHz
 `{timestamp, frequency_khz, file, duration_sec, noise_floor_db, notes}`.
 - `timestamp` is taken *after* the recording, so it marks the **end** of the capture. On ingest, start = timestamp − duration.
 - The scanner records no SNR, receiver ID, transcript or parsed fields yet. The schema has columns ready for them.
+- **Update (recorder schema 2, `hfgcs/capture.py` on main):** each catalog line now carries `start_utc` (activity onset), `file_start_utc` (start of pre-roll), `end_utc`, `frequency_khz`, `mode`, `receiver_id`, `file` (`HFGCS_<kHz>kHz_<YYYYmmddTHHMMSSZ>_<receiver>.wav`), `sha256`, `audio_rate`, `duration_sec`, `preroll_sec`, `snr_db_peak`, `snr_db_mean`, `noise_floor_db` and `truncated`. `ingest-catalog` reads both formats. For schema 2 it maps: capture start = `file_start_utc`, end = `end_utc`, receiver = `receiver_id` (falling back to `--receiver`), `snr_db` = `snr_db_mean` (peak stays in `raw_json`), `audio_sha256` = `sha256`, `sample_rate_hz` = `audio_rate`, `voice_start_s` = `preroll_sec` (`voice_start_method = 'recorder_preroll'`).
+- **Migration 0002** (`migrations/0002_review.sql`, applied by `init` or `migrate`) adds `reviews`, the append-only `edit_history` and `v_gold_labels` for the review app. See `docs/review-ui.md`.
 - The repo has no DB, ASR or parser yet. The repo has 0 issues and 0 PRs, so there is no prior DB discussion to follow.
 - Other work in progress lives in other branches: `hfgcs/` (Phase 0) and `decoding/` (parser, ASR, `ingest_missileer.py` for ASR labels). **Rebroadcast linking is owned by this DB tool.** Decoding contributes only an optional text-similarity function (§3.1).
 
@@ -67,22 +69,22 @@ In the repo (commit `55fe420`), `hfgcs_scanner.py` writes `recordings/HFGCS_<kHz
 | `link.simulcast_sec` | 120 | `--simulcast-sec` |
 | `link.window_hours` | 48 | `--window-hours` |
 | `link.threshold` | 0.90 | `--threshold` |
-| `link.min_known` | 0.5 | `--min-known` (built-in only; Decoding's function fixes 0.5) |
+| `link.min_known` | 0.5 | `--min-known` (both methods; passed to Decoding's function as keyword-only `min_known`) |
 | `link.similarity` | `auto` | `--similarity auto\|builtin\|decoding` |
 | `link.max_len_diff` | 2 | `--max-len-diff` (Decoding's similarity only) |
 
 - View settings with `hfgcs_db.py settings`; change one with `hfgcs_db.py settings link.threshold 0.92`. They are also visible in Datasette (`link_settings`).
 - **These defaults are provisional.** They will be tuned against missileer.watch data (co-receptions, rebroadcast links and listener corrections are ground truth) once Decoding has an evaluation set. Each change will be recorded here with its precision and recall.
 
-### 3.1 Interface expected from Decoding (implemented: `decoding-design` @ `38b8627`)
+### 3.1 Interface expected from Decoding (implemented: `decoding-design` @ `e423642`, merged to main)
 ```python
 # decoding/similarity.py
-def text_similarity(a: str, b: str) -> float | None: ...
+def text_similarity(a: str, b: str, *, min_known: float = 0.5) -> float | None: ...
 ```
 - **Inputs:** two `str` copies, already normalized by us (upper-case, no spaces, tabs or hyphens). `.` means unreadable and `?` means unknown; both are wildcards.
   - Lengths may differ by up to `link.max_len_diff` (default 2).
   - The function may normalize again in the same way; this must be idempotent.
-- **Returns:** a `float` in **[0.0, 1.0]**, where 1.0 means the same content. Return `None` when the pair cannot be compared because too few characters are known (Decoding fixes the minimum at `max(6, 0.5 × longer length)`).
+- **Returns:** a `float` in **[0.0, 1.0]**, where 1.0 means the same content. Return `None` when the pair cannot be compared because too few characters are known (minimum `max(6, min_known × longer length)`; the DB tool passes `link.min_known` through the keyword-only `min_known`, default 0.5).
   - The DB tool applies the threshold itself.
   - A value outside [0, 1] raises an error, and the run aborts without writing anything.
 - **Non-`str` input:** raises `TypeError`. That would be a caller bug, so it aborts the run, which leaves the DB unchanged.
@@ -98,7 +100,7 @@ def text_similarity(a: str, b: str) -> float | None: ...
 | # | Point | Ruling |
 |---|---|---|
 | 1 | `TypeError` on non-`str` | **Accept.** `None` means "data not comparable"; a wrong type is a programming error and should fail loudly. Our tool always passes `str`, and a failed run writes nothing. |
-| 2 | Minimum of 0.5 known characters fixed in code | **Accept for v1.** It keeps the two-argument contract and matches our default. `link.min_known` governs the built-in only. If tuning needs another value, Decoding adds a keyword-only `min_known=0.5` and we pass the setting through. |
+| 2 | Minimum of 0.5 known characters fixed in code | **Accepted, then superseded.** Decoding added a keyword-only `min_known=0.5` in `e423642`; the DB tool now passes `link.min_known` through (it falls back to the two-argument call for an older function without the keyword). |
 | 3 | Score can exceed the built-in at 0.90 | **Accept, no threshold change.** On equal lengths the link outcome was identical on NEET + missileer data (1,254 vs 1,254 links, same pairs). The higher scores come only from shifted copies, which are true duplicates. In 20,000 random same-prefix base32 pairs the best score was 0.33. |
 | 4 | Edit band = 8 | **Accept.** The band only adds to \|Δlen\|, and banding can only lower a score. A 292-character copy with 20 deletions still scored 0.93. |
 | 5 | Normalizing away tabs | **Yes.** Our `text_norm` already strips spaces, tabs and hyphens, and doing it again in the function is idempotent and harmless. |

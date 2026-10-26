@@ -1,0 +1,25 @@
+# PRIVATE review app (LAN only). systemd --user unit for user `scribe` on hilltop.
+# Install: see docs/review-ui.md section "Deploy on hilltop". Never route a tunnel to this port.
+[Unit]
+Description=HFGCS private review app (LAN only, port 8090)
+Documentation=file://%h/hfgcs-app/docs/review-ui.md
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/hfgcs-app
+EnvironmentFile=%h/.config/hfgcs/review.env
+ExecStart=%h/hfgcs-app/.venv/bin/python -m hfgcs.review_app serve
+# The LAN address may not exist yet when the user manager starts; retry until it does.
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+UMask=0077
+# Optional sandboxing. User units need unprivileged user namespaces for these; enable
+# them only if `systemctl --user start` still works afterwards.
+#PrivateTmp=yes
+#ProtectSystem=strict
+#ReadWritePaths=%h/hfgcs-app/data
+
+[Install]
+WantedBy=default.target

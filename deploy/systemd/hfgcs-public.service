@@ -1,0 +1,21 @@
+# PUBLIC project page (static files only). systemd --user unit for user `scribe` on hilltop.
+# The Cloudflare tunnel on mountain points at http://192.168.2.214:8091 and nothing else.
+[Unit]
+Description=HFGCS public project page (static, port 8091)
+Documentation=file://%h/hfgcs-app/docs/review-ui.md
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/hfgcs-app
+EnvironmentFile=%h/.config/hfgcs/public.env
+ExecStart=%h/hfgcs-app/.venv/bin/python -m hfgcs.static_site
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=yes
+UMask=0077
+#PrivateTmp=yes
+#ProtectSystem=strict
+
+[Install]
+WantedBy=default.target

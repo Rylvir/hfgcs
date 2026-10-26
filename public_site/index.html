@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HFGCS Monitoring Project</title>
+<meta name="description" content="An open-source hobby project that listens to the public High Frequency Global Communications System voice channels and studies the broadcast patterns.">
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <p class="kicker">Shortwave listening · open source</p>
+    <h1>HFGCS Monitoring Project</h1>
+    <p class="lede">A hobby project that listens to the public voice channels of the U.S. Air Force
+      High Frequency Global Communications System (HFGCS) and studies when and how often its
+      broadcasts are heard.</p>
+    <p class="cta"><a class="button" href="https://waterfall.scanplacer.com">Open the live waterfall</a>
+      <a class="button ghost" href="https://github.com/Rylvir/hfgcs">Source code on GitHub</a></p>
+  </div>
+</header>
+
+<main class="wrap">
+  <section>
+    <h2>What is HFGCS?</h2>
+    <p>HFGCS is a worldwide network of high-power shortwave stations. Its voice traffic is sent in
+      the clear on upper sideband, so anyone with a shortwave receiver can hear it. The best-known
+      transmissions are Emergency Action Messages (EAMs): an operator reads a string of phonetic
+      letters and numbers, usually twice. Their content is encrypted, and nobody outside the
+      intended audience knows what an individual message means.</p>
+  </section>
+
+  <section>
+    <h2>What this project does</h2>
+    <ul>
+      <li><strong>Listens</strong> to the published HFGCS channels (4724, 6739, 8992, 11175, 13200 and
+        15016 kHz USB) with a software-defined radio.</li>
+      <li><strong>Detects activity</strong> with an adaptive noise floor and squelch, so only real voice
+        traffic is kept.</li>
+      <li><strong>Decodes</strong> the phonetic alphabet automatically and checks the result against
+        human listening.</li>
+      <li><strong>Counts and compares</strong>: daily message counts, rebroadcasts of the same message,
+        and how our log lines up with other hobbyist logs.</li>
+    </ul>
+    <p>We do not try to decrypt anything. The interest is in the signals and the statistics:
+      timing, frequency use, message lengths and repeat patterns.</p>
+  </section>
+
+  <section>
+    <h2>The live waterfall</h2>
+    <p>The <a href="https://waterfall.scanplacer.com">waterfall</a> shows the radio spectrum around
+      the HFGCS channels in real time. Voice transmissions appear as bright vertical bands. It is the
+      quickest way to see whether anything is on the air right now.</p>
+  </section>
+
+  <section>
+    <h2>What you will not find here</h2>
+    <p>This page is a project overview only. It does not publish audio clips, message logs, or the
+      receiving station's whereabouts. The software is open source, so you can run your own
+      receiver and see the same public signals for yourself.</p>
+  </section>
+
+  <section>
+    <h2>Community resources</h2>
+    <ul>
+      <li><a href="https://neetintel.github.io">NEET INTEL</a>: long-running hobbyist HFGCS logs and daily timecards.</li>
+      <li><a href="https://missileer.watch">missileer.watch</a>: an open archive of HFGCS receptions.</li>
+      <li><a href="https://www.priyom.org">Priyom</a>: background on military and numbers stations.</li>
+    </ul>
+    <p class="small">Links go to independent sites; this project is not affiliated with them.</p>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap small">
+    <p>HFGCS Monitoring Project · code under the MIT License ·
+      <a href="https://github.com/Rylvir/hfgcs">github.com/Rylvir/hfgcs</a></p>
+  </div>
+</footer>
+</body>
+</html>

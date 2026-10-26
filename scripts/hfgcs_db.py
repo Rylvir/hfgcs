@@ -2,11 +2,12 @@
 """HFGCS message database tool (Python stdlib only).
 
 Subcommands
-  init            create/upgrade a database from schema.sql
+  init            create/upgrade a database from schema.sql, then apply migrations/
+  migrate         apply pending migrations/NNNN_*.sql (0002: review + edit history)
   import-neet     import a NEET INTEL-format CSV (DAY,DATE,UTC,CALLSIGN,PR,MESSAGE,Q,LN,
                   SPECIFICATION,E6,NOTES,SOURCE,SET)
   export-neet     export messages in the same CSV format
-  ingest-catalog  load the scanner's hfgcs_catalog.jsonl into `captures`
+  ingest-catalog  load the recorder's hfgcs_catalog.jsonl into `captures` (schema 2 or legacy)
   link            find simulcast/rebroadcast copies and rebuild clusters
   query           run a NEET-style query string (e.g. "2601&C30&G1&PR=CZ")
   import-missileer  upsert missileer.watch's CC0 archive.json (URL or file; read-only GET)
@@ -22,7 +23,10 @@ import argparse
 import csv
 import datetime as dt
 import hashlib
+import importlib
+import inspect
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -52,8 +56,30 @@ def cmd_init(args) -> int:
     con = connect(args.db)
     con.executescript(Path(args.schema).read_text(encoding="utf-8"))
     con.commit()
+    _migrations().apply_migrations(con)
     v = con.execute("SELECT max(version) FROM schema_version").fetchone()[0]
     print(f"initialised {args.db} (schema version {v}, sqlite {sqlite3.sqlite_version})")
+    return 0
+
+
+def _migrations():
+    """hfgcs/db_migrations.py (stdlib only), imported from the repo root."""
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    return importlib.import_module("hfgcs.db_migrations")
+
+
+def cmd_migrate(args) -> int:
+    """Apply pending migrations/NNNN_*.sql to an existing database (no-op when current)."""
+    con = connect(args.db)
+    mig = _migrations()
+    if args.status:
+        print(f"schema version {mig.current_version(con)}; pending: "
+              f"{[v for v, _, _ in mig.pending(con)] or 'none'}")
+        return 0
+    applied = mig.apply_migrations(con)
+    print(f"applied migrations {applied}" if applied else "schema already current")
+    print(f"schema version {mig.current_version(con)}")
     return 0
 
 
@@ -171,12 +197,58 @@ def to_z(ts: dt.datetime) -> str:
     return ts.strftime("%Y-%m-%dT%H:%M:%S.") + f"{ts.microsecond // 1000:03d}Z"
 
 
+def _utc(value: str) -> dt.datetime:
+    t = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return t.replace(tzinfo=dt.timezone.utc) if t.tzinfo is None else t
+
+
+def catalog_entry_to_capture(e: dict) -> dict:
+    """Map one catalog line to `captures` columns. Two formats are accepted:
+
+    * schema 2 (hfgcs/capture.py ``save_recording``, the recorder on main):
+      ``start_utc`` (activity onset), ``file_start_utc`` (start of pre-roll),
+      ``end_utc``, ``frequency_khz``, ``mode``, ``receiver_id``, ``file``,
+      ``sha256``, ``audio_rate``, ``duration_sec``, ``preroll_sec``,
+      ``snr_db_peak``, ``snr_db_mean``, ``noise_floor_db``, ``truncated``, ``notes``.
+      The capture spans the whole file (``file_start_utc`` .. ``end_utc``) and
+      ``voice_start_s`` = ``preroll_sec`` (seconds into the WAV where activity starts).
+    * legacy (hfgcs_scanner.py): ``{timestamp, frequency_khz, file, duration_sec,
+      noise_floor_db, notes}``; ``timestamp`` is the END of the capture.
+    """
+    if "end_utc" in e and ("start_utc" in e or "file_start_utc" in e):
+        start = _utc(e.get("file_start_utc") or e["start_utc"])
+        end = _utc(e["end_utc"])
+        dur = e.get("duration_sec")
+        dur = float(dur) if dur is not None else (end - start).total_seconds()
+        snr = e.get("snr_db_mean", e.get("snr_db"))
+        return {
+            "start": start, "end": end, "duration": dur, "receiver_code": e.get("receiver_id"),
+            "mode": e.get("mode") or "USB", "snr_db": snr, "noise_floor_db": e.get("noise_floor_db"),
+            "sha256": e.get("sha256"), "sample_rate_hz": e.get("audio_rate"),
+            "voice_start_s": e.get("preroll_sec"), "notes": e.get("notes"),
+        }
+    end = _utc(e["timestamp"])
+    dur = float(e.get("duration_sec") or 0)
+    return {
+        "start": end - dt.timedelta(seconds=dur), "end": end, "duration": dur, "receiver_code": None,
+        "mode": e.get("mode") or "USB", "snr_db": e.get("snr_db"), "noise_floor_db": e.get("noise_floor_db"),
+        "sha256": None, "sample_rate_hz": None, "voice_start_s": None, "notes": e.get("notes"),
+    }
+
+
 def cmd_ingest_catalog(args) -> int:
-    """hfgcs_scanner.py writes {timestamp, frequency_khz, file, duration_sec,
-    noise_floor_db, notes}; `timestamp` is taken when the WAV is written, i.e. the
-    END of the capture, so start = timestamp - duration."""
+    """Load the recorder's catalog JSONL into `captures` (both formats, see
+    catalog_entry_to_capture). Idempotent: rows are keyed by the audio SHA-256
+    (from the entry, else hashed from the file) and by the own-capture unique index."""
     con = connect(args.db)
-    rid = ensure_receiver(con, args.receiver, kind=args.kind)
+    receivers: dict[str, int] = {}
+
+    def rid_for(code):
+        code = code or args.receiver
+        if code not in receivers:
+            receivers[code] = ensure_receiver(con, code, kind=args.kind)
+        return receivers[code]
+
     base = Path(args.recordings_root) if args.recordings_root else Path(args.catalog).parent
     n = dup = 0
     with open(args.catalog, encoding="utf-8") as fh:
@@ -184,25 +256,29 @@ def cmd_ingest_catalog(args) -> int:
             if not line.strip():
                 continue
             e = json.loads(line)
-            end = dt.datetime.fromisoformat(e["timestamp"].replace("Z", "+00:00"))
-            if end.tzinfo is None:
-                end = end.replace(tzinfo=dt.timezone.utc)
-            dur = float(e.get("duration_sec") or 0)
-            start = end - dt.timedelta(seconds=dur)
-            f = base / e["file"] if e.get("file") else None
-            sha = hashlib.sha256(f.read_bytes()).hexdigest() if f and f.is_file() else None
+            c = catalog_entry_to_capture(e)
+            rel = e.get("file")
+            f = None
+            if rel:
+                f = Path(rel) if Path(rel).is_absolute() else base / rel
+                if not f.is_file() and (base / Path(rel).name).is_file():
+                    f = base / Path(rel).name   # catalog written with record_dir-relative paths
+            sha = c["sha256"] or (hashlib.sha256(f.read_bytes()).hexdigest() if f and f.is_file() else None)
             cur = con.execute(
-                """INSERT OR IGNORE INTO captures(receiver_id, frequency_khz, start_utc, end_utc,
-                       duration_sec, noise_floor_db, snr_db, audio_path, audio_sha256,
-                       source_catalog, raw_json, notes)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (rid, float(e["frequency_khz"]), to_z(start), to_z(end), dur,
-                 e.get("noise_floor_db"), e.get("snr_db"), e.get("file"), sha,
-                 f"{Path(args.catalog).name}:{lineno}", line.strip(), e.get("notes")))
+                """INSERT OR IGNORE INTO captures(receiver_id, frequency_khz, mode, start_utc, end_utc,
+                       duration_sec, noise_floor_db, snr_db, audio_path, audio_sha256, sample_rate_hz,
+                       voice_start_s, voice_start_method, source_catalog, raw_json, notes)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (rid_for(c["receiver_code"]), float(e["frequency_khz"]), c["mode"], to_z(c["start"]),
+                 to_z(c["end"]), c["duration"], c["noise_floor_db"], c["snr_db"], rel, sha,
+                 c["sample_rate_hz"], c["voice_start_s"],
+                 "recorder_preroll" if c["voice_start_s"] is not None else None,
+                 f"{Path(args.catalog).name}:{lineno}", line.strip(), c["notes"]))
             n += cur.rowcount
             dup += 1 - cur.rowcount
     con.commit()
-    print(f"ingested {n} captures ({dup} already present) for receiver {args.receiver}")
+    who = ", ".join(sorted(receivers)) or args.receiver
+    print(f"ingested {n} captures ({dup} already present) for receiver(s) {who}")
     return 0
 
 
@@ -271,8 +347,14 @@ def resolve_similarity(mode: str, min_known: float):
             raise
         return builtin
 
+    try:
+        takes_min_known = "min_known" in inspect.signature(text_similarity).parameters
+    except (TypeError, ValueError):
+        takes_min_known = False
+    kwargs = {"min_known": min_known} if takes_min_known else {}
+
     def checked(a, b):
-        v = text_similarity(a, b)
+        v = text_similarity(a, b, **kwargs)
         if v is None:
             return None
         v = float(v)
@@ -652,11 +734,15 @@ def cmd_query(args) -> int:
 # ------------------------------------------------------------------------ main
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--db", default="hfgcs.db")
+    ap.add_argument("--db", default=os.environ.get("HFGCS_DB", "hfgcs.db"),
+                    help="SQLite file (default: $HFGCS_DB, else ./hfgcs.db)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("init")
     s.add_argument("--schema", default=str(SCHEMA))
     s.set_defaults(fn=cmd_init)
+    s = sub.add_parser("migrate", help="apply pending migrations/NNNN_*.sql (e.g. 0002 review tables)")
+    s.add_argument("--status", action="store_true", help="only show the version and pending migrations")
+    s.set_defaults(fn=cmd_migrate)
     s = sub.add_parser("import-neet")
     s.add_argument("csv")
     s.add_argument("--receiver", help="receiver code to attach (e.g. neet-livestream)")
