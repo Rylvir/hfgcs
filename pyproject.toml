@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "HFGCS (High Frequency Global Communications System) monitoring: scanning, USB demodulation and recording"
 readme = "README.md"
 requires-python = ">=3.10"
-# No license declared yet: see docs/LICENSE_PROPOSAL.md.
+license = { text = "MIT" }
 dependencies = [
     "numpy>=1.24",
     "scipy>=1.10",

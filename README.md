@@ -96,3 +96,9 @@ Each recording is a 16-bit WAV in `recordings/` plus one JSON line in
 - Multi-device support later
 
 Recordings and the JSONL log are structured for easy review or contribution to projects like NEET INTEL.
+
+## License
+
+MIT, see [LICENSE](LICENSE). If Apache-2.0 code (for example from
+Chipensaw/HFGCS-Monitor-KiwiSDR) is reused later, it keeps its original
+license header and NOTICE alongside it.
