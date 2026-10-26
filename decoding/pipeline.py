@@ -62,19 +62,64 @@ class Decoder:
         return self._transcribers[key].transcribe(Path(audio), day_callsigns)
 
     def decode(self, audio: Path, day_callsigns: Sequence[str] = ()) -> dict:
+        """Returns ``{records, second_pass, duration_s, asr, decoder_version}``;
+        ``asr`` is the raw first-pass transcriber output (the words the
+        records' ``segment.word_start/word_end`` index)."""
         c = self.cfg
         first = self._transcribe(c.asr, audio, day_callsigns)
         records = _parse(first["words"], c.snap)
-        info = {"fired": False, "passes": 1, "asr_seconds": first.get("asr_seconds")}
+        info = second_pass_info(c)
+        info.update(fired=False, passes=1, asr_seconds=first.get("asr_seconds"))
         rec = main_eam(records)
         if c.second_pass and needs_second_pass(rec, c.second_pass_threshold):
             others = []
+            extra_s = []
             for overrides, snap in c.second_pass_passes:
                 out = self._transcribe(replace(c.asr, **overrides), audio, day_callsigns)
+                extra_s.append(out.get("asr_seconds"))
                 others.append(main_eam(_parse(out["words"], snap)))
             voted = apply_vote(rec, others)
             records = [voted if r is rec else r for r in records]
-            info.update(fired=True, passes=1 + len(others))
+            info.update(fired=True, passes=1 + len(others), second_pass_asr_seconds=extra_s)
         if c.preamble_fusion:
             records = [fuse_preamble(r) for r in records]
-        return {"records": records, "second_pass": info, "duration_s": first.get("duration_s")}
+        return {
+            "records": records,
+            "second_pass": info,
+            "duration_s": first.get("duration_s"),
+            "asr": {**first, "config_key": c.asr.key(), "day_callsigns": list(day_callsigns)},
+            "decoder_version": decoder_version(c),
+        }
+
+
+def second_pass_tag(cfg: DecodeConfig) -> str:
+    """``vote3@0.3`` (n-way character vote at that agreement threshold) or ``off``."""
+    if not cfg.second_pass:
+        return "off"
+    return f"vote{1 + len(cfg.second_pass_passes)}@{cfg.second_pass_threshold:g}"
+
+
+def second_pass_info(cfg: DecodeConfig) -> dict:
+    """Static description of the second pass (what would run, not whether it did)."""
+    return {
+        "mode": second_pass_tag(cfg),
+        "enabled": cfg.second_pass,
+        "threshold": cfg.second_pass_threshold,
+        "configs": [
+            {"config_key": replace(cfg.asr, **o).key(), "overrides": dict(o), "snap": snap}
+            for o, snap in cfg.second_pass_passes
+        ]
+        if cfg.second_pass
+        else [],
+    }
+
+
+def decoder_version(cfg: DecodeConfig) -> str:
+    """``decoding/<pkg>;parser=<schema>;asr=<AsrConfig.key()>;second_pass=<vote3@0.3|off>``."""
+    from . import __version__
+    from .eam_parser import SCHEMA_VERSION
+
+    return (
+        f"decoding/{__version__};parser={SCHEMA_VERSION};asr={cfg.asr.key()};"
+        f"second_pass={second_pass_tag(cfg)}"
+    )

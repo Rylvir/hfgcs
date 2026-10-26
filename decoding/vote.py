@@ -78,7 +78,7 @@ def needs_second_pass(rec: Optional[dict], threshold: float = AGREE_THRESHOLD) -
     negatives, and re-decoding them only costs CPU."""
     if not rec or rec.get("type") != "eam" or not rec.get("body"):
         return False
-    return rec.get("confidence", {}).get("reads_agree_ratio", 0.0) < threshold
+    return (rec.get("confidence_detail") or {}).get("reads_agree_ratio", 0.0) < threshold
 
 
 def apply_vote(rec: Optional[dict], others: Sequence[Optional[dict]]) -> Optional[dict]:

@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Rylvir/hfgcs/docs/decode.schema.json",
+  "title": "HFGCS per-recording decode document (schema_version 1.x)",
+  "description": "Written by `python -m decoding.run` as <audio>.decode.json beside the recording, and as one identical line of decodes.jsonl. See docs/decoding.md, 'Decode output'.",
+  "type": "object",
+  "required": ["schema_version", "decoder_version", "recording", "duration_s", "decoded_at", "asr", "broadcasts"],
+  "properties": {
+    "schema_version": {"type": "string", "pattern": "^1\\.[0-9]+$"},
+    "decoder_version": {
+      "type": "string",
+      "description": "decoding/<package version>;parser=<parser schema>;asr=<AsrConfig.key()>;second_pass=<vote3@0.3|off>",
+      "pattern": "^decoding/[0-9][^;]*;parser=[^;]+;asr=[0-9a-f]{12};second_pass=(vote[0-9]+@[0-9.]+|off)$"
+    },
+    "recording": {"$ref": "#/$defs/recording"},
+    "duration_s": {"type": ["number", "null"], "minimum": 0},
+    "decoded_at": {
+      "type": "string",
+      "description": "ISO 8601 UTC with a trailing Z, whole seconds",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "asr": {"$ref": "#/$defs/asr"},
+    "broadcasts": {"type": "array", "items": {"$ref": "#/$defs/broadcast"}}
+  },
+  "$defs": {
+    "recording": {
+      "type": "object",
+      "description": "path and sha256 of the file decoded, then every Phase 0 catalog field (schema 2) copied verbatim when decoded from a catalog: start_utc, file_start_utc, end_utc, frequency_khz, mode, receiver_id, file, audio_rate, duration_sec, preroll_sec, snr_db_peak, snr_db_mean, noise_floor_db, truncated, notes. catalog_sha256 appears only if the catalog's sha256 disagrees with the file.",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "catalog_sha256": {"type": "string"},
+        "schema": {"type": "integer"},
+        "start_utc": {"type": "string"},
+        "file_start_utc": {"type": "string"},
+        "end_utc": {"type": "string"},
+        "frequency_khz": {"type": "number"},
+        "mode": {"type": "string"},
+        "receiver_id": {"type": "string"},
+        "file": {"type": "string"},
+        "audio_rate": {"type": "integer"},
+        "duration_sec": {"type": "number"},
+        "preroll_sec": {"type": "number"},
+        "snr_db_peak": {"type": ["number", "null"]},
+        "snr_db_mean": {"type": ["number", "null"]},
+        "noise_floor_db": {"type": ["number", "null"]},
+        "truncated": {"type": "boolean"}
+      }
+    },
+    "asr": {
+      "type": "object",
+      "required": ["model", "config_key", "text", "segments", "words", "second_pass"],
+      "properties": {
+        "model": {"type": ["string", "null"]},
+        "compute_type": {"type": ["string", "null"]},
+        "config_key": {"type": ["string", "null"]},
+        "decoder_version": {"type": ["string", "null"], "description": "mirror of the top-level field"},
+        "day_callsigns": {"type": "array", "items": {"type": "string"}},
+        "duration_s": {"type": ["number", "null"]},
+        "asr_seconds": {"type": ["number", "null"]},
+        "text": {"type": "string"},
+        "segments": {
+          "type": "array",
+          "description": "first-pass ASR segments; word_span = inclusive [i, j] into words, null if the segment has no words",
+          "items": {
+            "type": "object",
+            "required": ["start", "end", "text", "word_span"],
+            "properties": {
+              "start": {"type": "number"},
+              "end": {"type": "number"},
+              "text": {"type": "string"},
+              "avg_logprob": {"type": ["number", "null"]},
+              "no_speech_prob": {"type": ["number", "null"]},
+              "word_span": {"$ref": "#/$defs/span_or_null"}
+            }
+          }
+        },
+        "words": {
+          "type": "array",
+          "description": "first-pass ASR words, seconds from the start of the audio file; snapped_to = the phonetic word the parser read it as",
+          "items": {
+            "type": "object",
+            "required": ["word", "start", "end", "probability"],
+            "properties": {
+              "word": {"type": "string"},
+              "start": {"type": ["number", "null"]},
+              "end": {"type": ["number", "null"]},
+              "probability": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+              "snapped_to": {"type": "string"}
+            }
+          }
+        },
+        "first_pass": {"type": "object"},
+        "second_pass": {
+          "type": "object",
+          "required": ["mode", "enabled", "fired", "passes"],
+          "properties": {
+            "mode": {"type": "string", "pattern": "^(vote[0-9]+@[0-9.]+|off)$"},
+            "enabled": {"type": "boolean"},
+            "threshold": {"type": "number"},
+            "fired": {"type": "boolean"},
+            "passes": {"type": "integer", "minimum": 1},
+            "configs": {"type": "array"},
+            "asr_seconds": {"type": ["number", "null"]},
+            "second_pass_asr_seconds": {"type": "array"}
+          }
+        }
+      }
+    },
+    "span_or_null": {
+      "anyOf": [
+        {"type": "null"},
+        {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2}
+      ]
+    },
+    "broadcast": {
+      "type": "object",
+      "description": "One broadcast. The fields below are common to all types; the parser's per-type fields follow (EAM: opening_callsign, closing_callsign, addressee, preamble, preamble_reads, declared_length, length_source, read1, read2, body, body_masked, chars, timing, out, more_to_follow; Skyking: codeword/time/authentication {value, read1, read2, agree, confidence}; other: text). segment keeps the parser's token range.",
+      "required": [
+        "broadcast_id", "type", "start_s", "end_s", "asr_word_span", "transcript", "callsign",
+        "callsigns_all", "confidence", "confidence_detail", "schema_version", "flags"
+      ],
+      "properties": {
+        "broadcast_id": {
+          "type": "string",
+          "description": "<recording sha256[:12]>@<start_s rounded to 0.1 s>; '#n' is appended only if two broadcasts would share an id",
+          "pattern": "^[0-9a-f]{12}@[0-9]+\\.[0-9](#[0-9]+)?$"
+        },
+        "type": {"enum": ["eam", "skyking", "radio_check", "other"]},
+        "schema_version": {"type": "string"},
+        "start_s": {"type": "number", "minimum": 0, "description": "seconds from the start of the audio file"},
+        "end_s": {"type": "number", "minimum": 0},
+        "asr_word_span": {"$ref": "#/$defs/span_or_null"},
+        "transcript": {"type": "string", "description": "this broadcast's own ASR words, joined"},
+        "callsign": {
+          "type": ["string", "null"],
+          "description": "the station's identifying callsign: closing 'this is X', else the opening one (radio_check: the station)"
+        },
+        "callsigns_all": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["callsign", "role"],
+            "properties": {
+              "callsign": {"type": "string"},
+              "role": {"enum": ["opening", "closing", "addressee", "station"]}
+            }
+          }
+        },
+        "confidence": {
+          "type": "number", "minimum": 0, "maximum": 1,
+          "description": "EAM: mean per-character body confidence; Skyking: minimum of the field confidences; radio_check/other: mean ASR word probability"
+        },
+        "confidence_detail": {
+          "type": "object",
+          "description": "EAM: {mean, min, low_count, reads_agree_ratio}; Skyking: {codeword, time, authentication}; radio_check/other: {mean_word_prob, n_words}"
+        },
+        "flags": {"type": "array", "items": {"type": "string"}},
+        "segment": {"type": "object"}
+      }
+    }
+  }
+}

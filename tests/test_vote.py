@@ -22,7 +22,8 @@ def test_vote_three_disagreeing_keeps_pivot_char():
 
 
 def _rec(body, agree, flags=()):
-    return {"type": "eam", "body": body, "confidence": {"reads_agree_ratio": agree}, "flags": list(flags)}
+    detail = {"reads_agree_ratio": agree}
+    return {"type": "eam", "body": body, "confidence_detail": detail, "flags": list(flags)}
 
 
 def test_trigger_rule():
@@ -30,7 +31,7 @@ def test_trigger_rule():
     assert needs_second_pass(_rec("ABCDEF", 0.29))
     assert not needs_second_pass(_rec("ABCDEF", 0.3))
     assert not needs_second_pass(None)  # radio checks / noise never trigger
-    assert not needs_second_pass({"type": "unknown", "flags": []})
+    assert not needs_second_pass({"type": "other", "flags": []})
     assert needs_second_pass(_rec("ABCDEF", 0.9), threshold=1.01)
 
 

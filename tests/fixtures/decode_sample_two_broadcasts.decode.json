@@ -1,0 +1,1457 @@
+{
+ "schema_version": "1.0",
+ "decoder_version": "decoding/0.2.0;parser=0.2;asr=5bfe156c6443;second_pass=vote3@0.3",
+ "recording": {
+  "path": "/workspace/hfgcs-data/eval/samples/HFGCS_11175kHz_20260923T173253Z_eval-synthetic.wav",
+  "sha256": "113a77c6bb383291d114bc845d206919462d04f79e4482cbf495ff1aa7b07a43",
+  "schema": 2,
+  "start_utc": "2026-09-23T17:32:53.000Z",
+  "file_start_utc": "2026-09-23T17:32:53.000Z",
+  "end_utc": "2026-09-23T17:39:07.297Z",
+  "frequency_khz": 11175,
+  "mode": "USB",
+  "receiver_id": "eval-synthetic",
+  "file": "HFGCS_11175kHz_20260923T173253Z_eval-synthetic.wav",
+  "audio_rate": 8000,
+  "duration_sec": 374.297,
+  "preroll_sec": 0.0,
+  "snr_db_peak": null,
+  "snr_db_mean": null,
+  "noise_floor_db": null,
+  "truncated": false,
+  "notes": "SYNTHETIC: gold eam-356f1a01 (EAM) + 2 s silence + gold eam-86d80b13 (EAM), concatenated; missileer.watch CC0-1.0"
+ },
+ "duration_s": 374.297,
+ "decoded_at": "2026-10-26T22:30:22Z",
+ "asr": {
+  "model": "small.en",
+  "compute_type": "int8",
+  "config_key": "5bfe156c6443",
+  "decoder_version": "decoding/0.2.0;parser=0.2;asr=5bfe156c6443;second_pass=vote3@0.3",
+  "day_callsigns": [],
+  "duration_s": 374.297125,
+  "asr_seconds": 173.4,
+  "text": "Four Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform Lima, stand by. Message follows. Alpha Four Alpha Uniform Lima Uniform Kilo Yankee Sierra Kilo India Big Door Big Door Kilo Hotel Foxtrot X-ray Tree Papa Delta Romeo Team R. Seven Delta Echo Golf Alpha Uniform Lima Uniform Kilo Yankee Sierra Kilo India Big Door Big Door Sierra Four Big Door Tango Hotel Fo Foxtrot X-ray Tree Papa Delta Romeo Big Door Seven Delta Echo Golf This is Cupway out. All stations, Five Delta Center Sierra Juliet Victor , Sierra, Juliet, Victor, Tesco, Nino, Rishi, Charlie, Lima, N",
+  "segments": [
+   {
+    "start": 0.0,
+    "end": 16.48,
+    "text": "Four Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform",
+    "avg_logprob": -0.5471018632253011,
+    "no_speech_prob": 0.0042023384012281895,
+    "word_span": [
+     0,
+     10
+    ]
+   },
+   {
+    "start": 16.48,
+    "end": 36.36,
+    "text": "Lima, stand by. Alpha Charlie Four Alpha Uniform Lima, stand by. Message follows. Alpha",
+    "avg_logprob": -0.2796808014745298,
+    "no_speech_prob": 0.027547307312488556,
+    "word_span": [
+     11,
+     24
+    ]
+   },
+   {
+    "start": 37.8,
+    "end": 56.34,
+    "text": "Four Alpha Uniform Lima Uniform Kilo Yankee Sierra Kilo India Big Door Big Door",
+    "avg_logprob": -0.5058708935976028,
+    "no_speech_prob": 0.11685489118099213,
+    "word_span": [
+     25,
+     38
+    ]
+   },
+   {
+    "start": 60.4,
+    "end": 80.9,
+    "text": "Kilo Hotel Foxtrot X-ray Tree Papa Delta Romeo Team R. Seven Delta Echo Golf",
+    "avg_logprob": -0.9074264142824255,
+    "no_speech_prob": 0.08312869071960449,
+    "word_span": [
+     39,
+     53
+    ]
+   },
+   {
+    "start": 90.88,
+    "end": 110.98,
+    "text": "Alpha Uniform Lima Uniform Kilo Yankee Sierra Kilo India Big Door Big Door Sierra Four",
+    "avg_logprob": -0.5079375562213716,
+    "no_speech_prob": 0.5716592669487,
+    "word_span": [
+     54,
+     68
+    ]
+   },
+   {
+    "start": 111.98,
+    "end": 117.12,
+    "text": "Big Door Tango Hotel Fo",
+    "avg_logprob": -0.45579026852335247,
+    "no_speech_prob": 0.2964116632938385,
+    "word_span": [
+     69,
+     73
+    ]
+   },
+   {
+    "start": 117.12,
+    "end": 133.38,
+    "text": "Foxtrot X-ray Tree Papa Delta Romeo Big Door Seven Delta Echo Golf",
+    "avg_logprob": -0.45579026852335247,
+    "no_speech_prob": 0.2964116632938385,
+    "word_span": [
+     74,
+     86
+    ]
+   },
+   {
+    "start": 133.38,
+    "end": 138.98,
+    "text": "This is Cupway out.",
+    "avg_logprob": -0.9317332373725044,
+    "no_speech_prob": 0.0686708465218544,
+    "word_span": [
+     87,
+     90
+    ]
+   },
+   {
+    "start": 204.52,
+    "end": 207.32,
+    "text": "All stations,",
+    "avg_logprob": -0.9250041757311139,
+    "no_speech_prob": 0.6921523213386536,
+    "word_span": [
+     91,
+     92
+    ]
+   },
+   {
+    "start": 267.32,
+    "end": 277.32,
+    "text": "Five Delta Center Sierra Juliet Victor",
+    "avg_logprob": -0.9627572206350473,
+    "no_speech_prob": 0.8005605340003967,
+    "word_span": [
+     93,
+     98
+    ]
+   },
+   {
+    "start": 277.32,
+    "end": 278.32,
+    "text": ",",
+    "avg_logprob": -0.9627572206350473,
+    "no_speech_prob": 0.8005605340003967,
+    "word_span": null
+   },
+   {
+    "start": 343.66,
+    "end": 362.0,
+    "text": "Sierra, Juliet, Victor, Tesco, Nino, Rishi, Charlie, Lima, N",
+    "avg_logprob": -0.9970334509144658,
+    "no_speech_prob": 0.00034795707324519753,
+    "word_span": [
+     99,
+     107
+    ]
+   }
+  ],
+  "words": [
+   {
+    "word": "Four",
+    "start": 0.0,
+    "end": 0.56,
+    "probability": 0.0879
+   },
+   {
+    "word": "Alpha",
+    "start": 0.56,
+    "end": 2.14,
+    "probability": 0.2891
+   },
+   {
+    "word": "Uniform",
+    "start": 2.14,
+    "end": 3.68,
+    "probability": 0.2082
+   },
+   {
+    "word": "Lima,",
+    "start": 3.68,
+    "end": 5.08,
+    "probability": 0.1196
+   },
+   {
+    "word": "stand",
+    "start": 6.18,
+    "end": 6.32,
+    "probability": 0.1894
+   },
+   {
+    "word": "by.",
+    "start": 6.32,
+    "end": 8.58,
+    "probability": 0.9898
+   },
+   {
+    "word": "Alpha",
+    "start": 9.18,
+    "end": 10.58,
+    "probability": 0.9312
+   },
+   {
+    "word": "Charlie",
+    "start": 10.58,
+    "end": 11.98,
+    "probability": 0.9609
+   },
+   {
+    "word": "Four",
+    "start": 11.98,
+    "end": 13.54,
+    "probability": 0.6162
+   },
+   {
+    "word": "Alpha",
+    "start": 13.54,
+    "end": 15.16,
+    "probability": 0.9661
+   },
+   {
+    "word": "Uniform",
+    "start": 15.16,
+    "end": 16.48,
+    "probability": 0.7579
+   },
+   {
+    "word": "Lima,",
+    "start": 16.48,
+    "end": 17.68,
+    "probability": 0.0
+   },
+   {
+    "word": "stand",
+    "start": 18.9,
+    "end": 19.14,
+    "probability": 0.4296
+   },
+   {
+    "word": "by.",
+    "start": 19.14,
+    "end": 19.74,
+    "probability": 0.9946
+   },
+   {
+    "word": "Alpha",
+    "start": 21.06,
+    "end": 22.22,
+    "probability": 0.9123
+   },
+   {
+    "word": "Charlie",
+    "start": 22.22,
+    "end": 23.46,
+    "probability": 0.8631
+   },
+   {
+    "word": "Four",
+    "start": 23.46,
+    "end": 24.72,
+    "probability": 0.0526
+   },
+   {
+    "word": "Alpha",
+    "start": 24.72,
+    "end": 26.24,
+    "probability": 0.3276
+   },
+   {
+    "word": "Uniform",
+    "start": 26.24,
+    "end": 27.82,
+    "probability": 0.6338
+   },
+   {
+    "word": "Lima,",
+    "start": 27.82,
+    "end": 28.98,
+    "probability": 0.8355
+   },
+   {
+    "word": "stand",
+    "start": 29.96,
+    "end": 30.36,
+    "probability": 0.9296
+   },
+   {
+    "word": "by.",
+    "start": 30.36,
+    "end": 31.3,
+    "probability": 0.9947
+   },
+   {
+    "word": "Message",
+    "start": 32.08,
+    "end": 32.36,
+    "probability": 0.0396
+   },
+   {
+    "word": "follows.",
+    "start": 32.36,
+    "end": 33.34,
+    "probability": 0.0146
+   },
+   {
+    "word": "Alpha",
+    "start": 35.0,
+    "end": 36.36,
+    "probability": 0.9816
+   },
+   {
+    "word": "Four",
+    "start": 37.8,
+    "end": 39.12,
+    "probability": 0.0067
+   },
+   {
+    "word": "Alpha",
+    "start": 39.12,
+    "end": 40.82,
+    "probability": 0.4663
+   },
+   {
+    "word": "Uniform",
+    "start": 40.82,
+    "end": 42.52,
+    "probability": 0.5158
+   },
+   {
+    "word": "Lima",
+    "start": 42.52,
+    "end": 43.74,
+    "probability": 0.6131
+   },
+   {
+    "word": "Uniform",
+    "start": 43.74,
+    "end": 45.36,
+    "probability": 0.8534
+   },
+   {
+    "word": "Kilo",
+    "start": 45.36,
+    "end": 46.72,
+    "probability": 0.3915
+   },
+   {
+    "word": "Yankee",
+    "start": 46.72,
+    "end": 48.14,
+    "probability": 0.0028
+   },
+   {
+    "word": "Sierra",
+    "start": 48.14,
+    "end": 49.7,
+    "probability": 0.9606
+   },
+   {
+    "word": "Kilo",
+    "start": 49.7,
+    "end": 51.12,
+    "probability": 0.9096
+   },
+   {
+    "word": "India",
+    "start": 51.12,
+    "end": 52.78,
+    "probability": 0.9775
+   },
+   {
+    "word": "Big",
+    "start": 52.78,
+    "end": 53.94,
+    "probability": 0.7224
+   },
+   {
+    "word": "Door",
+    "start": 53.94,
+    "end": 54.28,
+    "probability": 0.7118
+   },
+   {
+    "word": "Big",
+    "start": 54.28,
+    "end": 55.54,
+    "probability": 0.8531
+   },
+   {
+    "word": "Door",
+    "start": 55.54,
+    "end": 56.34,
+    "probability": 0.989
+   },
+   {
+    "word": "Kilo",
+    "start": 60.4,
+    "end": 61.8,
+    "probability": 0.0018
+   },
+   {
+    "word": "Hotel",
+    "start": 61.8,
+    "end": 63.2,
+    "probability": 0.0124
+   },
+   {
+    "word": "Foxtrot",
+    "start": 63.2,
+    "end": 65.46,
+    "probability": 0.6458
+   },
+   {
+    "word": "X",
+    "start": 65.46,
+    "end": 66.14,
+    "probability": 0.5406
+   },
+   {
+    "word": "-ray",
+    "start": 66.14,
+    "end": 66.52,
+    "probability": 0.649
+   },
+   {
+    "word": "Tree",
+    "start": 66.52,
+    "end": 67.94,
+    "probability": 0.5137
+   },
+   {
+    "word": "Papa",
+    "start": 67.94,
+    "end": 69.54,
+    "probability": 0.6828
+   },
+   {
+    "word": "Delta",
+    "start": 69.54,
+    "end": 71.3,
+    "probability": 0.6565
+   },
+   {
+    "word": "Romeo",
+    "start": 71.3,
+    "end": 72.9,
+    "probability": 0.9786
+   },
+   {
+    "word": "Team",
+    "start": 72.9,
+    "end": 74.28,
+    "probability": 0.3971
+   },
+   {
+    "word": "R.",
+    "start": 74.28,
+    "end": 74.52,
+    "probability": 0.0001
+   },
+   {
+    "word": "Seven",
+    "start": 74.74,
+    "end": 76.04,
+    "probability": 0.0343
+   },
+   {
+    "word": "Delta",
+    "start": 76.04,
+    "end": 77.82,
+    "probability": 0.9748
+   },
+   {
+    "word": "Echo",
+    "start": 77.82,
+    "end": 79.24,
+    "probability": 0.9011
+   },
+   {
+    "word": "Golf",
+    "start": 79.24,
+    "end": 80.9,
+    "probability": 0.4941
+   },
+   {
+    "word": "Alpha",
+    "start": 90.88,
+    "end": 92.28,
+    "probability": 0.5484
+   },
+   {
+    "word": "Uniform",
+    "start": 92.28,
+    "end": 93.68,
+    "probability": 0.1518
+   },
+   {
+    "word": "Lima",
+    "start": 93.68,
+    "end": 95.04,
+    "probability": 0.5766
+   },
+   {
+    "word": "Uniform",
+    "start": 95.04,
+    "end": 96.8,
+    "probability": 0.8127
+   },
+   {
+    "word": "Kilo",
+    "start": 96.8,
+    "end": 98.3,
+    "probability": 0.19
+   },
+   {
+    "word": "Yankee",
+    "start": 98.3,
+    "end": 99.8,
+    "probability": 0.5581
+   },
+   {
+    "word": "Sierra",
+    "start": 99.8,
+    "end": 101.3,
+    "probability": 0.9892
+   },
+   {
+    "word": "Kilo",
+    "start": 101.3,
+    "end": 102.94,
+    "probability": 0.9595
+   },
+   {
+    "word": "India",
+    "start": 102.94,
+    "end": 104.78,
+    "probability": 0.0304
+   },
+   {
+    "word": "Big",
+    "start": 104.78,
+    "end": 105.98,
+    "probability": 0.0104
+   },
+   {
+    "word": "Door",
+    "start": 105.98,
+    "end": 106.34,
+    "probability": 0.7639
+   },
+   {
+    "word": "Big",
+    "start": 106.34,
+    "end": 107.6,
+    "probability": 0.2236
+   },
+   {
+    "word": "Door",
+    "start": 107.6,
+    "end": 109.5,
+    "probability": 0.9711
+   },
+   {
+    "word": "Sierra",
+    "start": 109.5,
+    "end": 109.5,
+    "probability": 0.4473
+   },
+   {
+    "word": "Four",
+    "start": 109.5,
+    "end": 110.98,
+    "probability": 0.031
+   },
+   {
+    "word": "Big",
+    "start": 111.98,
+    "end": 112.34,
+    "probability": 0.2233
+   },
+   {
+    "word": "Door",
+    "start": 112.34,
+    "end": 112.7,
+    "probability": 0.4195
+   },
+   {
+    "word": "Tango",
+    "start": 112.7,
+    "end": 114.24,
+    "probability": 0.7685
+   },
+   {
+    "word": "Hotel",
+    "start": 114.24,
+    "end": 115.76,
+    "probability": 0.9751
+   },
+   {
+    "word": "Fo",
+    "start": 115.76,
+    "end": 117.12,
+    "probability": 0.0761
+   },
+   {
+    "word": "Foxtrot",
+    "start": 117.12,
+    "end": 117.64,
+    "probability": 0.3327
+   },
+   {
+    "word": "X",
+    "start": 117.64,
+    "end": 118.66,
+    "probability": 0.2833
+   },
+   {
+    "word": "-ray",
+    "start": 118.66,
+    "end": 118.98,
+    "probability": 0.2793
+   },
+   {
+    "word": "Tree",
+    "start": 118.98,
+    "end": 120.48,
+    "probability": 0.0622
+   },
+   {
+    "word": "Papa",
+    "start": 120.48,
+    "end": 121.82,
+    "probability": 0.0032
+   },
+   {
+    "word": "Delta",
+    "start": 121.82,
+    "end": 123.54,
+    "probability": 0.5886
+   },
+   {
+    "word": "Romeo",
+    "start": 123.54,
+    "end": 124.98,
+    "probability": 0.3821
+   },
+   {
+    "word": "Big",
+    "start": 124.98,
+    "end": 126.48,
+    "probability": 0.9635
+   },
+   {
+    "word": "Door",
+    "start": 126.48,
+    "end": 126.88,
+    "probability": 0.9585
+   },
+   {
+    "word": "Seven",
+    "start": 126.88,
+    "end": 128.22,
+    "probability": 0.1518
+   },
+   {
+    "word": "Delta",
+    "start": 128.22,
+    "end": 130.12,
+    "probability": 0.9861
+   },
+   {
+    "word": "Echo",
+    "start": 130.12,
+    "end": 131.68,
+    "probability": 0.9648
+   },
+   {
+    "word": "Golf",
+    "start": 131.68,
+    "end": 133.38,
+    "probability": 0.9347
+   },
+   {
+    "word": "This",
+    "start": 133.38,
+    "end": 135.94,
+    "probability": 0.4903
+   },
+   {
+    "word": "is",
+    "start": 135.94,
+    "end": 136.88,
+    "probability": 0.9687
+   },
+   {
+    "word": "Cupway",
+    "start": 136.88,
+    "end": 138.0,
+    "probability": 0.1811
+   },
+   {
+    "word": "out.",
+    "start": 138.0,
+    "end": 138.98,
+    "probability": 0.6768
+   },
+   {
+    "word": "All",
+    "start": 204.52,
+    "end": 205.92,
+    "probability": 0.1431
+   },
+   {
+    "word": "stations,",
+    "start": 205.92,
+    "end": 207.32,
+    "probability": 0.399
+   },
+   {
+    "word": "Five",
+    "start": 267.32,
+    "end": 268.18,
+    "probability": 0.221
+   },
+   {
+    "word": "Delta",
+    "start": 268.18,
+    "end": 270.0,
+    "probability": 0.002
+   },
+   {
+    "word": "Center",
+    "start": 270.0,
+    "end": 270.88,
+    "probability": 0.0751
+   },
+   {
+    "word": "Sierra",
+    "start": 270.88,
+    "end": 272.5,
+    "probability": 0.9388
+   },
+   {
+    "word": "Juliet",
+    "start": 272.5,
+    "end": 274.66,
+    "probability": 0.7152
+   },
+   {
+    "word": "Victor,",
+    "start": 274.66,
+    "end": 277.32,
+    "probability": 0.9317
+   },
+   {
+    "word": "Sierra,",
+    "start": 343.66,
+    "end": 344.3,
+    "probability": 0.7182
+   },
+   {
+    "word": "Juliet,",
+    "start": 345.56,
+    "end": 346.46,
+    "probability": 0.0679
+   },
+   {
+    "word": "Victor,",
+    "start": 348.26,
+    "end": 348.84,
+    "probability": 0.5681
+   },
+   {
+    "word": "Tesco,",
+    "start": 350.06,
+    "end": 351.24,
+    "probability": 0.3517
+   },
+   {
+    "word": "Nino,",
+    "start": 352.66,
+    "end": 353.24,
+    "probability": 0.0234,
+    "snapped_to": "nine"
+   },
+   {
+    "word": "Rishi,",
+    "start": 354.52,
+    "end": 355.52,
+    "probability": 0.3388
+   },
+   {
+    "word": "Charlie,",
+    "start": 356.84,
+    "end": 357.88,
+    "probability": 0.9214
+   },
+   {
+    "word": "Lima,",
+    "start": 359.38,
+    "end": 360.1,
+    "probability": 0.4455
+   },
+   {
+    "word": "N",
+    "start": 362.0,
+    "end": 362.0,
+    "probability": 0.09
+   }
+  ],
+  "first_pass": {
+   "config_key": "5bfe156c6443",
+   "model": "small.en",
+   "compute_type": "int8",
+   "asr_seconds": 173.4
+  },
+  "second_pass": {
+   "mode": "vote3@0.3",
+   "enabled": true,
+   "threshold": 0.3,
+   "configs": [
+    {
+     "config_key": "f859126967e2",
+     "overrides": {
+      "vad_filter": false,
+      "condition_on_previous_text": false
+     },
+     "snap": true
+    },
+    {
+     "config_key": "cd9520516476",
+     "overrides": {
+      "vad_filter": true,
+      "condition_on_previous_text": false
+     },
+     "snap": false
+    }
+   ],
+   "fired": true,
+   "passes": 3,
+   "asr_seconds": 173.4,
+   "second_pass_asr_seconds": [
+    155.0,
+    16.1
+   ]
+  }
+ },
+ "broadcasts": [
+  {
+   "broadcast_id": "113a77c6bb38@0.0",
+   "type": "eam",
+   "start_s": 0.0,
+   "end_s": 138.98,
+   "asr_word_span": [
+    0,
+    90
+   ],
+   "transcript": "Four Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform Lima, stand by. Message follows. Alpha Four Alpha Uniform Lima Uniform Kilo Yankee Sierra Kilo India Big Door Big Door Kilo Hotel Foxtrot X -ray Tree Papa Delta Romeo Team R. Seven Delta Echo Golf Alpha Uniform Lima Uniform Kilo Yankee Sierra Kilo India Big Door Big Door Sierra Four Big Door Tango Hotel Fo Foxtrot X -ray Tree Papa Delta Romeo Big Door Seven Delta Echo Golf This is Cupway out.",
+   "callsign": "CUPWAY",
+   "callsigns_all": [
+    {
+     "callsign": "CUPWAY",
+     "role": "closing"
+    }
+   ],
+   "confidence": 0.321,
+   "confidence_detail": {
+    "mean": 0.321,
+    "min": 0.0,
+    "low_count": 33,
+    "reads_agree_ratio": 0.0
+   },
+   "schema_version": "0.2",
+   "opening_callsign": null,
+   "opening_callsign_confidence": 0.0,
+   "addressee": null,
+   "preamble": "AC4AUL",
+   "preamble_reads": [
+    "4AUL",
+    "AC4AUL",
+    "AC4AUL"
+   ],
+   "declared_length": null,
+   "length_source": "default",
+   "expected_length": 30,
+   "read1": "A4AULUKYSKIKHFX3PDRR7DEGAULUKYSKIS4THFX3PDR7DEG",
+   "read2": "",
+   "body": "A4AULUKYSKIKHFX3PDRR7DEGAULUKYSKIS4THFX3PDR7DEG",
+   "body_masked": "A....U..SKI.......R..DE.......SK....H.......DEG",
+   "body_length": 47,
+   "chars": [
+    {
+     "char": "A",
+     "confidence": 0.794,
+     "read1": "A",
+     "read2": null,
+     "agree": false,
+     "preamble": "A"
+    },
+    {
+     "char": "4",
+     "confidence": 0.004,
+     "read1": "4",
+     "read2": null,
+     "agree": false,
+     "preamble": "C"
+    },
+    {
+     "char": "A",
+     "confidence": 0.28,
+     "read1": "A",
+     "read2": null,
+     "agree": false,
+     "preamble": "4"
+    },
+    {
+     "char": "U",
+     "confidence": 0.309,
+     "read1": "U",
+     "read2": null,
+     "agree": false,
+     "preamble": "A"
+    },
+    {
+     "char": "L",
+     "confidence": 0.368,
+     "read1": "L",
+     "read2": null,
+     "agree": false,
+     "preamble": "U"
+    },
+    {
+     "char": "U",
+     "confidence": 0.512,
+     "read1": "U",
+     "read2": null,
+     "agree": false,
+     "preamble": "L"
+    },
+    {
+     "char": "K",
+     "confidence": 0.235,
+     "read1": "K",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "Y",
+     "confidence": 0.002,
+     "read1": "Y",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "S",
+     "confidence": 0.576,
+     "read1": "S",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "K",
+     "confidence": 0.546,
+     "read1": "K",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "I",
+     "confidence": 0.587,
+     "read1": "I",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "K",
+     "confidence": 0.001,
+     "read1": "K",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "H",
+     "confidence": 0.007,
+     "read1": "H",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "F",
+     "confidence": 0.387,
+     "read1": "F",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "X",
+     "confidence": 0.324,
+     "read1": "X",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "3",
+     "confidence": 0.308,
+     "read1": "3",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "P",
+     "confidence": 0.41,
+     "read1": "P",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "D",
+     "confidence": 0.394,
+     "read1": "D",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "R",
+     "confidence": 0.587,
+     "read1": "R",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "R",
+     "confidence": 0.0,
+     "read1": "R",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "7",
+     "confidence": 0.021,
+     "read1": "7",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "D",
+     "confidence": 0.585,
+     "read1": "D",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "E",
+     "confidence": 0.541,
+     "read1": "E",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "G",
+     "confidence": 0.296,
+     "read1": "G",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "A",
+     "confidence": 0.329,
+     "read1": "A",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "U",
+     "confidence": 0.091,
+     "read1": "U",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "L",
+     "confidence": 0.346,
+     "read1": "L",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "U",
+     "confidence": 0.488,
+     "read1": "U",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "K",
+     "confidence": 0.114,
+     "read1": "K",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "Y",
+     "confidence": 0.335,
+     "read1": "Y",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "S",
+     "confidence": 0.594,
+     "read1": "S",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "K",
+     "confidence": 0.576,
+     "read1": "K",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "I",
+     "confidence": 0.018,
+     "read1": "I",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "S",
+     "confidence": 0.268,
+     "read1": "S",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "4",
+     "confidence": 0.019,
+     "read1": "4",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "T",
+     "confidence": 0.461,
+     "read1": "T",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "H",
+     "confidence": 0.585,
+     "read1": "H",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "F",
+     "confidence": 0.2,
+     "read1": "F",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "X",
+     "confidence": 0.168,
+     "read1": "X",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "3",
+     "confidence": 0.037,
+     "read1": "3",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "P",
+     "confidence": 0.002,
+     "read1": "P",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "D",
+     "confidence": 0.353,
+     "read1": "D",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "R",
+     "confidence": 0.229,
+     "read1": "R",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "7",
+     "confidence": 0.091,
+     "read1": "7",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "D",
+     "confidence": 0.592,
+     "read1": "D",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "E",
+     "confidence": 0.579,
+     "read1": "E",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "G",
+     "confidence": 0.561,
+     "read1": "G",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    }
+   ],
+   "timing": {
+    "read1": {
+     "start_sec": 35.0,
+     "end_sec": 133.38
+    },
+    "read2": {
+     "start_sec": null,
+     "end_sec": null
+    }
+   },
+   "closing_callsign": "CUPWAY",
+   "more_to_follow": false,
+   "out": true,
+   "disregard": false,
+   "flags": [
+    "missing_all_stations",
+    "missing_callsign",
+    "preamble_reads_disagree",
+    "single_read",
+    "non_character_words_in_body",
+    "length_mismatch",
+    "preamble_body_mismatch",
+    "partial_start",
+    "second_pass_vote"
+   ],
+   "segment": {
+    "token_start": 0,
+    "token_end": 86,
+    "start_sec": 0.0,
+    "end_sec": 138.98,
+    "word_start": 0,
+    "word_end": 90
+   },
+   "body_first_pass": "A4AULUKYSKIKHFX3PDRR7DEGAULUKYSKIS4THFX3PDR7DEG"
+  },
+  {
+   "broadcast_id": "113a77c6bb38@204.5",
+   "type": "eam",
+   "start_s": 204.52,
+   "end_s": 362.0,
+   "asr_word_span": [
+    91,
+    107
+   ],
+   "transcript": "All stations, Five Delta Center Sierra Juliet Victor, Sierra, Juliet, Victor, Tesco, Nino, Rishi, Charlie, Lima, N",
+   "callsign": null,
+   "callsigns_all": [],
+   "confidence": 0.325,
+   "confidence_detail": {
+    "mean": 0.325,
+    "min": 0.007,
+    "low_count": 7,
+    "reads_agree_ratio": 0.0
+   },
+   "schema_version": "0.2",
+   "opening_callsign": null,
+   "opening_callsign_confidence": 0.0,
+   "addressee": null,
+   "preamble": null,
+   "preamble_reads": [],
+   "declared_length": null,
+   "length_source": "default",
+   "expected_length": 30,
+   "read1": "SJVSJV9CLN",
+   "read2": "",
+   "body": "SJVSJV9CLN",
+   "body_masked": "S.V....C..",
+   "body_length": 10,
+   "chars": [
+    {
+     "char": "S",
+     "confidence": 0.563,
+     "read1": "S",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "J",
+     "confidence": 0.429,
+     "read1": "J",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "V",
+     "confidence": 0.559,
+     "read1": "V",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "S",
+     "confidence": 0.431,
+     "read1": "S",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "J",
+     "confidence": 0.041,
+     "read1": "J",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "V",
+     "confidence": 0.341,
+     "read1": "V",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "9",
+     "confidence": 0.007,
+     "read1": "9",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "C",
+     "confidence": 0.553,
+     "read1": "C",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "L",
+     "confidence": 0.267,
+     "read1": "L",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "N",
+     "confidence": 0.054,
+     "read1": "N",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    }
+   ],
+   "timing": {
+    "read1": {
+     "start_sec": 270.0,
+     "end_sec": 362.0
+    },
+    "read2": {
+     "start_sec": null,
+     "end_sec": null
+    }
+   },
+   "closing_callsign": null,
+   "more_to_follow": false,
+   "out": false,
+   "disregard": false,
+   "flags": [
+    "missing_callsign",
+    "missing_message_follows",
+    "missing_preamble",
+    "single_read",
+    "non_character_words_in_body",
+    "length_mismatch"
+   ],
+   "segment": {
+    "token_start": 86,
+    "token_end": 103,
+    "start_sec": 204.52,
+    "end_sec": 362.0,
+    "word_start": 91,
+    "word_end": 107
+   }
+  }
+ ]
+}

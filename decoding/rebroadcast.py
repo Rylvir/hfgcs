@@ -19,6 +19,14 @@ def _ts(v) -> datetime:
     return v if isinstance(v, datetime) else datetime.fromisoformat(str(v).replace("Z", "+00:00"))
 
 
+def _confidence(r: dict) -> float:
+    """Overall 0-1 confidence; also reads pre-0.2 records (``confidence`` dict)."""
+    c = r.get("confidence")
+    if isinstance(c, dict):
+        return c.get("mean", 0) or 0
+    return float(c) if isinstance(c, (int, float)) else 0.0
+
+
 def link_rebroadcasts(
     records: Sequence[dict], max_cer: float = MAX_BODY_CER, window: timedelta = WINDOW
 ) -> list[dict]:
@@ -58,9 +66,7 @@ def link_rebroadcasts(
         t0 = _ts(members[0]["timestamp"])
         best = max(
             members,
-            key=lambda r: (
-                r.get("confidence", {}).get("mean", 0) if isinstance(r.get("confidence"), dict) else 0
-            ),
+            key=lambda r: _confidence(r),
         )
         out.append(
             {

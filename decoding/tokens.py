@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Iterable, Optional, Sequence, Union
 
 # NATO/ICAO alphabet plus spellings ASR commonly produces for HF voice.
@@ -82,12 +82,15 @@ _JOINS = {("sky", "king"): "skyking", ("x", "ray"): "xray", ("stand", "by"): "st
 @dataclass
 class Token:
     """One ASR word. ``prob`` is the word probability (faster-whisper
-    ``word.probability``); times are seconds from the start of the audio."""
+    ``word.probability``); times are seconds from the start of the audio.
+    ``src`` is the inclusive range ``(i, j)`` of input words (ASR word
+    indices) the token came from; ``tokenize`` fills it in."""
 
     text: str
     prob: float = 1.0
     start: Optional[float] = None
     end: Optional[float] = None
+    src: Optional[tuple[int, int]] = None
 
     @property
     def norm(self) -> str:
@@ -103,11 +106,12 @@ def tokenize(transcript: TokenInput) -> list[Token]:
     """
     raw: list[Token] = []
     if isinstance(transcript, str):
-        raw = [Token(w) for w in re.split(r"[\s,.;:!?]+", transcript) if w]
+        words = [w for w in re.split(r"[\s,.;:!?]+", transcript) if w]
+        raw = [Token(w, src=(k, k)) for k, w in enumerate(words)]
     else:
-        for t in transcript:
+        for k, t in enumerate(transcript):
             if isinstance(t, Token):
-                raw.append(t)
+                raw.append(t if t.src is not None else replace(t, src=(k, k)))
             else:
                 raw.append(
                     Token(
@@ -115,6 +119,7 @@ def tokenize(transcript: TokenInput) -> list[Token]:
                         float(t.get("probability", t.get("prob", 1.0))),
                         t.get("start"),
                         t.get("end"),
+                        (k, k),
                     )
                 )
     # A single ASR word can hold several ("Alpha,Bravo"); split those, keeping
@@ -123,7 +128,7 @@ def tokenize(transcript: TokenInput) -> list[Token]:
     for t in raw:
         parts = [p for p in re.split(r"[\s,.;:!?]+", t.text) if p]
         for p in parts:
-            split.append(Token(p, t.prob, t.start, t.end))
+            split.append(Token(p, t.prob, t.start, t.end, t.src))
     out: list[Token] = []
     i = 0
     while i < len(split):
@@ -131,13 +136,21 @@ def tokenize(transcript: TokenInput) -> list[Token]:
             key = (split[i].norm, split[i + 1].norm)
             if key in _JOINS:
                 a, b = split[i], split[i + 1]
-                out.append(Token(_JOINS[key], min(a.prob, b.prob), a.start, b.end))
+                out.append(Token(_JOINS[key], min(a.prob, b.prob), a.start, b.end, src_span(a, b)))
                 i += 2
                 continue
         if split[i].norm:
             out.append(split[i])
         i += 1
     return drop_repetition_loops(_join_say_again(out))
+
+
+def src_span(*toks: Token) -> Optional[tuple[int, int]]:
+    """Inclusive input-word range covered by ``toks`` (None if none is known)."""
+    srcs = [t.src for t in toks if t.src is not None]
+    if not srcs:
+        return None
+    return (min(s[0] for s in srcs), max(s[1] for s in srcs))
 
 
 def _join_say_again(toks: list[Token]) -> list[Token]:
@@ -152,7 +165,8 @@ def _join_say_again(toks: list[Token]) -> list[Token]:
             first = toks[i]
             while out and out[-1].norm in ("say", "said", "i", "id", "ill", "ive", "ai", "it", "iced"):
                 first = out.pop()
-            out.append(Token("sayagain", min(first.prob, toks[i].prob), first.start, toks[i].end))
+            prob = min(first.prob, toks[i].prob)
+            out.append(Token("sayagain", prob, first.start, toks[i].end, src_span(first, toks[i])))
             i += 1
             continue
         out.append(toks[i])
