@@ -238,8 +238,18 @@ The reason gold does not move is systematic: on 5 of 8 gold EAMs **every** heari
 character or two (QHUDS2 → "HDS2Z", ACC6GX → "CCGX", QHJY7J → "HJET7J"; the Q/V of the QH…/VQ… prefixes is
 clipped at each onset). Voting cannot recover a character that no hearing contains. A second decode with the
 fused preamble in the prompt was not run: it needs a per-clip re-decode (about 2× CPU on the triggered clips), and
-it would at most restore one dropped onset character. A prefix prior (the eval's preambles start with QH, VQ, 56,
-WE, AC or 4S) is the cheaper next step.
+it would at most restore one dropped onset character. **Preamble-prefix prior, tried and not adopted (2026-10-26).** First-pair counts were learned from the 148 silver
+training preambles only (silver EAMs not in the 30-clip eval subset; gold excluded): 56 ×59, QH ×21, AC ×11,
+WE ×10, VQ ×6. Rule: when the preamble is shorter than 6, or the body is shorter than expected, and the first heard
+character x is far more often the *second* character of a pair (c, x) than a first character
+(P = n(cx) / (n(cx) + n(x first) + n(other ·x)) ≥ 0.6, n(cx) ≥ 5), prepend c. At 0.6 the rule restores H→QH,
+6→56 and C→AC; Q is not restored, because Q usually starts a preamble. Results:
+- gold body CER 0.542 → 0.538 (`best`) and 0.486 → 0.482 (default), one character;
+- silver: no change at all (0.387 / 0.364);
+- preamble exact-match unchanged everywhere (gold 0.125, silver 0.500), because the gold preambles that lose
+  their Q also have a second error (QHUDS2 → "HDS2Z").
+
+The rule did not help on silver, so per the decision rule it is not committed as code.
 
 **Mid-message start detection (`eam_parser.mid_message_start_kind`).** A headless EAM (`partial_start`) whose
 transcript has **neither a preamble hearing nor "message follows"** (an inferred one counts as present), yet does have
