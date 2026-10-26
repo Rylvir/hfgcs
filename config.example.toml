@@ -1,0 +1,11 @@
+# Copy to config.toml and pass with --config. Every key is optional.
+receiver_id = "airspyhf-local"
+soapy_args = "driver=airspyhf"
+hang_seconds = 4.0
+preroll_seconds = 1.5
+open_snr_db = 8.0
+close_snr_db = 5.0
+# channels = [4724, 6739, 8992, 11175, 13200, 15016]
+# Or pick named groups from hfgcs.config.FREQUENCY_GROUPS:
+# channel_groups = ["voice"]            # default
+# channel_groups = ["voice", "ale"]     # ALE needs a decoder; USB audio is recorded as-is

@@ -4,3 +4,7 @@ __pycache__/
 recordings/
 hfgcs_catalog.jsonl
 *.wav
+.pytest_cache/
+*.egg-info/
+build/
+config.toml
