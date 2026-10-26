@@ -207,7 +207,7 @@ evaluate process is about 1.7 GB. `vad_t10_pad` was stopped at 10/14 gold clips 
 | gold (8 EAMs, 14 clips) | 0.542 | **0.486** | 0.486 | 5 of 8 EAMs, 0 of 6 negatives | 0.196 → 0.347 (1.77×) |
 | silver (30 EAMs) | 0.387 | **0.364** | 0.354 | 10 of 30 | 0.132 → 0.178 (1.35×) |
 
-Gated voting gets all of the always-vote gain on gold and about 70 % of it on silver, at about a third of the extra
+The earlier gold-only lead, a third pass of `no_vad_noskip` instead of `baseline`, does not hold up on silver: always-vote gives gold 0.474 but silver **0.482** (gated: 0.522 / 0.461), and `no_vad_noskip` alone scores 0.724 on silver. So the second pass uses `baseline`. Gated voting gets all of the always-vote gain on gold and about 70 % of it on silver, at about a third of the extra
 CPU. The cost is higher on gold because its triggered clips are the long ones. Preamble and length exact-match are
 unchanged, because the vote only rewrites `body`. The CPU numbers are measured ASR seconds from the cache, with all
 passes on 8 threads.
