@@ -18,8 +18,8 @@ from hfgcs import review_db
 ROOT = Path(__file__).resolve().parents[1]
 FIX = ROOT / "tests" / "fixtures"
 CATALOG = [json.loads(x) for x in (FIX / "recorder_catalog_v2_fake.jsonl").read_text().splitlines()]
-V1 = "decoding/0.2.0;parser=0.1;asr=ab12cd34;second_pass=vote3@0.3"
-V2 = "decoding/0.3.0;parser=0.1;asr=ef56ab78;second_pass=off"
+V1 = "decoding/0.2.0;parser=0.2;asr=ab12cd34ef56;second_pass=vote3@0.3"
+V2 = "decoding/0.3.0;parser=0.2;asr=ef56ab78cd90;second_pass=off"
 BODY = "QXABCDEFGHJKLMNPRSTUVWYZ234567"            # what the parser reads from BODY_WORDS
 BODY_INDIA = BODY.replace("H", "I")
 

@@ -761,9 +761,9 @@ DECODE_TYPES = {"eam": ("EAM", "broadcast"), "skyking": ("SKYKING", "broadcast")
                 "radio_check": ("RADIOCHECK", "broadcast"), "other": ("OTHER", "unknown")}
 MATCH_WINDOW_S = 2.0
 PARTIAL_FLAGS = {"partial_start", "mid_message_start", "truncated"}
-REVIEW_FLAGS = {"reads_disagree", "preamble_reads_disagree", "length_mismatch", "declared_length_conflict",
-                "preamble_body_mismatch", "single_read", "missing_preamble", "invalid_time",
-                "closing_callsign_mismatch", "non_character_words_in_body"}
+REVIEW_FLAGS = {"truncated", "reads_disagree", "preamble_reads_disagree", "length_mismatch",
+                "declared_length_conflict", "preamble_body_mismatch", "single_read", "missing_preamble",
+                "invalid_time", "closing_callsign_mismatch", "non_character_words_in_body"}
 # Machine-owned columns a re-decode may overwrite on rows nobody has touched.
 MACHINE_FIELDS = ("msg_type", "broadcast_type", "heard_utc", "heard_at_basis", "offset_sec", "start_s",
                   "end_s", "broadcast_id", "callsign", "callsigns_all", "prefix", "message_text", "length",
@@ -815,13 +815,15 @@ def check_decode_doc(doc: dict) -> None:
 
 
 def _find_capture(con, rec_entry: dict, source_path: Path):
-    """Capture for a decode: by recording sha256, else stored path, else unique file name
-    (recording.path / recording.file, or the sidecar's name minus ``.decode.json``)."""
-    sha = rec_entry.get("sha256")
-    if sha:
-        row = con.execute("SELECT * FROM captures WHERE audio_sha256 = ?", (sha,)).fetchone()
-        if row:
-            return row
+    """Capture for a decode: by recording sha256 (the file's, then ``catalog_sha256``, which
+    Decoding keeps when the catalog's hash differs from the file), else stored path, else unique
+    file name (recording.path / recording.file, or the sidecar's name minus ``.decode.json``)."""
+    for key in ("sha256", "catalog_sha256"):
+        sha = rec_entry.get(key)
+        if sha:
+            row = con.execute("SELECT * FROM captures WHERE audio_sha256 = ?", (sha,)).fetchone()
+            if row:
+                return row
     names = []
     for key in ("path", "file"):
         f = rec_entry.get(key)

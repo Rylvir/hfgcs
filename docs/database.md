@@ -305,27 +305,40 @@ A trailing `x` (NEET's week-collapse) is accepted and ignored. In the CLI, `C`/`
 ```bash
 hfgcs_db.py --db "$HFGCS_DB" load-decodes recordings/ decodes.jsonl   # dirs, *.decode.json or *.jsonl
 ```
-**Input: decode output contract v1**, agreed with Decoding and being built on their branch `decoding-output`.
+**Input: decode output contract v1**, agreed with Decoding and on main since #13 (`decoding/output.py`,
+`decoding/run.py`, JSON Schema `docs/decode.schema.json`, real sample
+`tests/fixtures/decode_sample_two_broadcasts.decode.json`). Written by `python -m decoding.run`.
 - One document per recording, written as `<wav>.decode.json` next to the WAV and as one line of
   `decodes.jsonl` (the same document).
 - Top-level keys:
   - `schema_version`, `decoder_version` and `duration_s`.
-  - `recording`: `{path, sha256, …catalog fields}`.
-  - `decoded_at`: UTC.
-  - `asr`: `{segments, words with timings and probabilities, first_pass, second_pass}`.
+  - `recording`: `{path, sha256, …schema-2 catalog fields verbatim}`, including `file` (bare audio gets
+    `file` = `path`) and `truncated`. When the catalog's sha256 differs from the file's, `sha256` is the
+    file's and the catalog's is kept as `catalog_sha256`.
+  - `decoded_at`: UTC, whole seconds, trailing `Z`.
+  - `asr`: `{model, config_key, segments (with word_span), words with timings and probabilities,
+    first_pass, second_pass, decoder_version}`. `asr.decoder_version` mirrors the top-level one; the
+    loader reads the top-level field. From `asr` it uses only `model`; `first_pass`, words and segments
+    are not stored (each broadcast's own `transcript` and times are).
   - `broadcasts`: a list of broadcast objects.
 - Each broadcast has:
-  - `broadcast_id`: `<sha256[:12]>@<start_s rounded to 0.1 s>`.
+  - `broadcast_id`: `<sha256[:12]>@<start_s rounded to 0.1 s>`, with `#2`, `#3` appended if two broadcasts
+    of one recording would collide (Decoding has never seen it). Stored as is; the suffix carries into
+    `import_key`.
   - `type`: `eam` | `skyking` | `radio_check` | `other`.
   - `start_s`, `end_s`, `asr_word_span [i, j]` (into `asr.words`), and `transcript`.
-  - `callsign`: the identifying (closing) callsign.
-  - `callsigns_all`: `[{callsign, role}]`.
-  - `confidence`: a float in 0–1.
+  - `callsign`: the identifying callsign: the closing "this is X", else the opening one, else (radio
+    checks) the station's. Null when none was heard.
+  - `callsigns_all`: `[{callsign, role}]`, role `opening` | `closing` | `addressee` | `station`.
+  - `confidence`: a float in 0–1 (EAM: mean character confidence; Skyking: lowest field confidence;
+    radio_check/other: mean word probability, with words snapped to the vocabulary counted at half their probability).
   - `confidence_detail`: per-type structure.
   - The parser fields (`body`, `preamble`, `declared_length`, `chars`, `flags`, Skyking
     `codeword/time/authentication`, …). Parser token indices are ignored.
-- `decoder_version` is one string, e.g. `decoding/0.2.0;parser=0.1;asr=<AsrConfig key>;second_pass=vote3@0.3`
-  (or `second_pass=off`).
+- `decoder_version` is one string, e.g. `decoding/0.2.0;parser=0.2;asr=5bfe156c6443;second_pass=vote3@0.3`
+  (or `second_pass=off`). Parser schema 0.2 is the first with these type names and per-broadcast word ranges.
+- Parser 0.2 splits a recording into broadcasts; a "this is X … radio check / test count" after a closed
+  broadcast starts a new `radio_check` broadcast, which the loader stores as its own row.
 - Directories are searched recursively for `*.decode.json`.
 - A document missing `schema_version`, `decoder_version`, `recording` or `broadcasts`, or with a broadcast
   lacking `type`/`start_s` or with a `confidence` outside 0–1, is skipped and listed (`--strict` exits 1).
@@ -333,7 +346,8 @@ hfgcs_db.py --db "$HFGCS_DB" load-decodes recordings/ decodes.jsonl   # dirs, *.
   writer for it ever existed on main, so there is no data in it to migrate.
 
 **Matching a recording to a capture**, in order:
-1. `recording.sha256` = `captures.audio_sha256`.
+1. `recording.sha256`, then `recording.catalog_sha256`, = `captures.audio_sha256` (`ingest-catalog` keys
+   captures by the catalog's hash).
 2. `recording.path` (or `file`) = `captures.audio_path`.
 3. A unique capture whose path ends in that file name, or in the sidecar's name minus `.decode.json`.
 
@@ -359,7 +373,7 @@ same code as `ingest-catalog`; `--no-create-captures` turns this off).
 | `body` (EAM) | `message_text`; `prefix` = first 2 characters |
 | `declared_length`, `preamble`, `addressee` | `length` (+ `announced_length` when `length_source = announced`), `preamble`, `addressee` |
 | Skyking `codeword/time/authentication` (`.value`) | `skyking_codeword/_time/_auth` |
-| `flags` | `partial` = any of `partial_start`/`mid_message_start`/`truncated`; `review_status = needs_review` for quality flags or confidence < 0.8 |
+| `flags` | `partial` = any of `partial_start`/`mid_message_start`/`truncated`; `review_status = needs_review` for quality flags (including `truncated`) or confidence < 0.8 |
 | doc `decoder_version`, `decoded_at`, `asr.model` | `decoder_version` (`--decoder-version` overrides), `decoded_utc`, `asr_model` (else the `asr=` part of the version) |
 
 Every broadcast loaded is also stored in `message_decodes`: canonical JSON, its SHA-256, `decoder_version`,
@@ -393,7 +407,18 @@ Every broadcast loaded is also stored in `message_decodes`: canonical JSON, its 
 | 7 | Opening vs closing callsign | `callsign` = closing (identifying); `callsigns_all` with roles |
 | 8 | Confidence shape differs per type | Scalar `confidence` 0–1 everywhere; structure in `confidence_detail` |
 
-**Still to confirm once `decoding-output` lands:**
-- `schema_version` is stored only inside `message_decodes.record_json`; the loader does not branch on it yet.
-- The fixtures (`tests/decode_fixtures.py`) wrap main's real parser output in the agreed shape. They should be
-  checked against a real document from `decoding-output` when one exists.
+**Truncated recordings.** When the recorder hit its length cap (`recording.truncated`), Decoding adds the
+flag `truncated` to the recording's last broadcast. The loader marks that message `partial = 1` and
+`needs_review`. The recording-level flag stays in `captures.raw_json` (no separate column), and the full
+flag list of every broadcast is in `message_decodes.record_json`.
+
+**Checked against Decoding's real output (2026-10-26, main 7885af8):**
+- `docs/decode.schema.json`: every field the loader reads is required there, with the types it assumes.
+- The committed sample (two EAMs at 0.0 s and 204.52 s) loads with `--strict` into 2 messages with the
+  document's transcripts, times, confidence, callsign, `decoder_version` and `decoded_at`. A re-run changes
+  nothing, and a different re-decode leaves a corrected and a checked message as the reviewer left them
+  (`tests/test_load_decodes_real.py`). A fresh `python -m decoding.run` of the same WAV loads the same way.
+- `tests/decode_fixtures.py` now builds documents with Decoding's own parser and
+  `decoding.output.build_document`, so the loader tests follow the writer.
+- `schema_version` (`"1.0"`) is stored only inside `message_decodes.record_json`; the loader does not
+  branch on it.
