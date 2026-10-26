@@ -43,7 +43,11 @@ faster-whisper with word timestamps, then word list `[{word, probability, start,
 - **Level:** use a slow dynamic normaliser (`dynaudnorm=f=250:g=15`) instead of per-chunk peak normalisation. HF QSB fades over seconds, and a fast AGC lifts noise between characters. Option: `noisereduce` (spectral gating, MIT) behind a flag. Spectral gating can smear phonetic consonants, so it stays **off by default until the eval set shows a CER gain**. The same rule applies to RNNoise (`arnndn`).
 - Keep the original file. The preprocessed 16 kHz WAV is temporary.
 
-### VAD (silero-vad via faster-whisper `vad_filter=True`)
+### VAD (silero-vad via faster-whisper): **off by default since the eval below**
+On the eval set, silero dropped whole character groups of weak HF speech even at threshold 0.35 (one gold clip came
+back as just "Message, Alpha, Charlie."). Turning it off was the largest single CER gain (gold 0.82 → 0.55), so
+`AsrConfig.vad_filter` now defaults to `False` and the no-speech / hallucination guards do the gating. The tuned
+parameters below are kept for `vad_filter=True` (cheaper on long, mostly-silent streams; about 2× faster):
 faster-whisper's `VadOptions` defaults (v1.2.1) are tuned for clean speech. HF voice needs these changes:
 - `threshold` **0.35** (default 0.5). Weak characters under noise score below 0.5 and get dropped.
 - `min_silence_duration_ms` **1500**. Operators pause between groups and before "I say again". Splitting there breaks the context.
@@ -61,7 +65,8 @@ Route low-confidence messages to a second pass with a larger model (two-pass esc
 
 ### Decoding settings
 - `language="en"`, `beam_size=5`, `word_timestamps=True`.
-- `condition_on_previous_text=False`. With it on, a 30-character read degenerates into repetition loops.
+- `condition_on_previous_text=True` (changed after the eval below). It can degenerate into repetition loops on long
+  reads, so the parser strips n-gram loops first.
 - `temperature=[0, 0.2, 0.4]` (a short fallback ladder). `no_speech_threshold=0.6`, `hallucination_silence_threshold=2.0` (this skips long silences where Whisper invents text).
 - **`initial_prompt`**: a realistic EAM opening in the exact spelling we want back (Whisper imitates the style of its prompt). It includes "All stations … this is <callsign of the day>", phonetic characters in Title Case, "Niner", "X-ray", "stand by", "Message follows", "I say again" and "Skyking". Keep it short, because the prompt shares the 448-token context. See `decoding/asr.build_prompt`.
 - **`hotwords`**: the NATO alphabet, "Skyking", "Mainsail", the Priyom station names and the **day's NCS callsign**. The NCS callsign changes daily at 00:00 UTC (per Priyom). Once a reliable callsign has been heard, feed it back for the rest of that UTC day. See `decoding/asr.build_hotwords`.
@@ -105,13 +110,110 @@ That run led to these parser changes, each with a regression test:
 
 PyAV and faster-whisper 1.2.1 are out of step on this box (`metadata_errors` TypeError). `asr.py` therefore decodes with ffmpeg and passes a numpy array.
 
-Next experiments, in order:
-1. `medium.en` and `distil-large-v3`. This needs more than the roughly 2 GB of RAM currently free on this box, or a GPU.
-2. VAD threshold sweep.
-3. Prompt without punctuation.
-4. A CTC forced-alignment / closed-vocabulary rescoring pass over the phonetic lexicon.
+The follow-up experiments are in the next subsection.
+
+### CER iteration on the eval set (2026-10-26, CPU, `small.en` int8 only)
+**Command** (repeatable; ASR output is cached per config under `eval/cache/<AsrConfig.key()>/`, so rescoring after a
+parser change is instant with `--cached-only`):
+```
+python -m decoding.evaluate --subset gold   --config baseline --config best [--cached-only] --out results/gold.json
+python -m decoding.evaluate --subset silver --config baseline --config best --out results/silver.json
+```
+- **gold** = the 14 listener-corrected clips (8 EAMs, 6 radio checks = negatives).
+- **silver** = 30 EAMs from the uncorrected feed with a full body (no `.`) and both reads. Silver labels are
+  missileer's own machine copy, so silver CER measures agreement with their pipeline, not truth. It is a check
+  against overfitting the 8 gold EAMs, not an accuracy figure.
+- Body CER = masked Levenshtein / reference length over all EAMs (micro); `.` in a label matches anything.
+  "Preamble EM" / "length EM" are exact matches of the first 6 characters / the declared length (count in brackets).
+  "False EAM" = an EAM emitted on a gold negative. RTF = ASR seconds / audio seconds on 8 cores.
+- Configs are overrides on the v0.1 settings (`evaluate.CONFIGS`, `V01_BASE`). Every row below was rescored with
+  the final parser. Rows not listed were not run, because VAD-off dominated.
+
+**Gold (14 clips; missileer's own machine copy scores 0.418 on the same 8 EAMs):**
+
+| config | what changes | body CER (micro) | CER median | preamble EM | length EM | detected | false EAM | RTF |
+|---|---|---|---|---|---|---|---|---|
+| baseline | v0.1: silero VAD (t=0.35), EAM prompt + hotwords, bp_norm | 0.823 | 0.867 | 0.000 | 0.333 (3) | 0.750 | 0/6 | 0.069 |
+| best | **chosen defaults**: VAD off, cond_prev on, + snap | 0.542 | 0.562 | 0.125 | 0.333 (3) | 1.000 | 0/6 | 0.196 |
+| no_vad | VAD off | 0.554 | 0.600 | 0.250 | 0.333 (3) | 0.875 | 0/6 | 0.176 |
+| no_vad_snap | VAD off + snap | 0.518 | 0.600 | 0.250 | 0.333 (3) | 1.000 | 0/6 | 0.176 |
+| nv_cond_prev | VAD off, condition_on_previous_text | 0.534 | 0.562 | 0.125 | 0.333 (3) | 1.000 | 0/6 | 0.196 |
+| nv_cond_prev_snap | = best | 0.542 | 0.562 | 0.125 | 0.333 (3) | 1.000 | 0/6 | 0.196 |
+| no_vad_noskip | VAD off, all skip/no-speech guards off | 0.566 | 0.733 | 0.125 | 0.333 (3) | 1.000 | 0/6 | 0.121 |
+| nv_no_prompt | VAD off, no prompt | 0.819 | 1.000 | 0.125 | 0.667 (3) | 0.750 | 0/6 | 0.190 |
+| nv_phonetic | VAD off, phonetic-only prompt | 0.747 | 0.906 | 0.125 | 1.000 (3) | 1.000 | 0/6 | 0.357 |
+| nv_no_hot | VAD off, no hotwords | 0.679 | 0.700 | 0.125 | 1.000 (3) | 1.000 | 0/6 | 0.117 |
+| nv_pre_none | VAD off, no preprocessing | 0.735 | 0.933 | 0.125 | 0.667 (3) | 0.750 | 0/6 | 0.194 |
+| nv_pre_bp | VAD off, bandpass only | 0.719 | 0.900 | 0.125 | 0.333 (3) | 0.875 | 0/6 | 0.154 |
+| nv_pre_denoise | VAD off, + afftdn denoise | 0.627 | 0.600 | 0.125 | 0.667 (3) | 0.875 | 0/6 | 0.173 |
+| nv_pre_denoise_snap | VAD off, denoise + snap | 0.631 | 0.633 | 0.250 | 0.667 (3) | 0.875 | 0/6 | 0.173 |
+| nv_pre_wide | VAD off, 100-3800 Hz | 0.647 | 0.833 | 0.125 | 0.667 (3) | 0.750 | 0/6 | 0.148 |
+| nv_no_hst | VAD off, no hallucination_silence_threshold | 0.839 | 1.000 | 0.125 | 0.333 (3) | 0.500 | 0/6 | 0.077 |
+| vocab_novad | VAD off, suppress_tokens whitelist | 0.631 | 0.733 | 0.125 | 0.000 (3) | 0.750 | 0/6 | 0.157 |
+| chunk8 | own VAD windows ≤8 s | 0.912 | 0.967 | 0.000 | 0.333 (3) | 0.750 | 1/6 | 0.145 |
+| no_prompt | no prompt | 0.867 | 0.967 | 0.000 | 0.333 (3) | 0.625 | 2/6 | 0.051 |
+| no_prompt_no_hot | no prompt, no hotwords | 0.831 | 0.857 | 0.000 | 0.667 (3) | 0.750 | 1/6 | 0.042 |
+| phonetic_prompt | phonetic prompt | 0.884 | 1.000 | 0.000 | 0.667 (3) | 0.625 | 0/6 | 0.057 |
+| phonetic_prompt_no_hot | phonetic prompt, no hotwords | 0.896 | 0.933 | 0.000 | 0.667 (3) | 0.625 | 1/6 | 0.035 |
+
+**Silver (30 EAMs):**
+
+| config | body CER (micro) | CER median | preamble EM | length EM | detected | RTF |
+|---|---|---|---|---|---|---|
+| baseline | 0.693 | 0.667 | 0.200 | 0.000 (6) | 0.867 | 0.034 |
+| best | 0.387 | 0.229 | 0.500 | 0.667 (6) | 1.000 | 0.132 |
+| no_vad | 0.602 | 0.346 | 0.433 | 0.667 (6) | 0.967 | 0.090 |
+| no_vad_snap | 0.591 | 0.306 | 0.500 | 0.667 (6) | 0.967 | 0.090 |
+| nv_cond_prev | 0.416 | 0.257 | 0.467 | 0.667 (6) | 1.000 | 0.132 |
+
+**Chosen defaults** (`AsrConfig()` = the `best` row): VAD off; `condition_on_previous_text=True`; EAM prompt plus
+hotwords; `bp_norm` preprocessing; `hallucination_silence_threshold=2.0`; then `snap.snap_words` on the word list
+before the parser. On gold, `best` (0.542) and `no_vad_snap` (0.518) are within noise (about 6 characters of 249).
+On silver, `best` is far ahead (0.387 vs 0.591, median 0.229 vs 0.306), so pooled over both it wins (about 0.42 vs
+0.58). Caveat: silver labels are missileer's machine copy, and their pipeline may also decode with previous-text
+conditioning, which would flatter cond-prev on silver. Re-check once there are more gold labels. Peak RSS of one
+evaluate process is about 1.7 GB. `vad_t10_pad` was stopped at 10/14 gold clips (4 EAMs, 0.842) and is not listed.
+
+**What helped (body CER, baseline → best: gold 0.823 → 0.542, best gold row 0.518 `no_vad_snap`; silver 0.693 → 0.387):**
+1. **VAD off** (0.823 → 0.699 with the old parser). Silero cut weak characters and whole groups.
+2. **Parser robustness** on real ASR output (0.699 → 0.554 on the same no-VAD transcripts), each with a regression
+   test: "follow"/"followed"/"Classic. Follow." accepted as *message follows*, an inferred "message follows" when it
+   is missing, "I'd / iced it / said again" joined to *say again*, preamble repeats stripped from the start of read 1,
+   concatenated reads split by self-alignment, and an unstructured fallback for long character runs.
+3. **`condition_on_previous_text=True` once VAD is off** (silver 0.602 → 0.416; gold 0.554 → 0.534). Context
+   between 30 s windows keeps the phonetic style going, and the repetition loops it used to cause are now removed
+   by `drop_repetition_loops`.
+4. **Phonetic snapping** (`snap.py`; gold 0.554 → 0.518 and silver 0.602 → 0.591 on no-VAD; silver 0.416 → 0.387 on
+   cond-prev, but gold 0.534 → 0.542 there; preamble EM up on silver).
+   Near-miss words ("Elpha", "Fokstrot") are snapped to the NATO word by edit distance plus a sound key, with a
+   protected list of real English words ("ray", "brake", "for", "to") that must not become letters.
+5. Keeping the EAM prompt plus hotwords (no prompt: 0.819; phonetic prompt: 0.747) and the `bp_norm` chain (no
+   preprocessing 0.735; bandpass only 0.719; denoise 0.627; wide 0.647).
+
+**What did not help:** chunked decoding with our own VAD windows (0.91), `noskip` (all skip guards off: 0.566 without VAD), dropping `hallucination_silence_threshold` (0.839, loops return), the closed-vocabulary
+`suppress_tokens` whitelist (0.631: it forces garbage words into letters), and `afftdn` denoise (0.627).
+
+**Lead, not adopted:** a 3-way character vote over the no-VAD, cond-prev and noskip transcripts (aligned to one pivot
+with `align.py`) gave 0.474 on gold. That costs 3× CPU (RTF about 0.5) and was not checked on silver. It is the
+next thing to try, together with simulcast fusion (§2), which gives the same vote across receivers for free.
+
+**Remaining failure modes:**
+- Mangled phonetic words that are too far for safe snapping: "Dory", "Big Door", "Koopalink", "Whitty", "Aloha".
+- Clips that start mid-message (no header or preamble), so only one partial read is available.
+- Hallucination loops after the sign-off or in long carrier gaps. They are removed as loops but sometimes leave junk
+  characters at a body edge.
+- Low preamble exact match on gold (0.25). One wrong character in 6 fails the match.
+- Unknown daily callsigns, which the hotwords cannot know until one has been heard.
+- One gold clip (eam-ed75798a) holds two messages, and CER above 1 there is a labelling and segmentation mismatch.
+- Gold has only 8 EAMs, so differences under about 0.03 are noise. Silver confirms the ordering of the top rows.
+
+Next: `medium.en` or `distil-large-v3` as a second pass for low-confidence bodies (needs more RAM or a GPU),
+the 3-way vote, and a CTC forced-alignment rescoring pass over the phonetic lexicon.
 
 ### Reuse from brisi-jt/skywatch (verified: MIT, `LICENSE` © 2026 James Towns, last push 2026-10-21)
+Our repo is MIT too, so copying is allowed with the notice kept. **As of this commit nothing is copied.** The patterns
+below are already implemented in our own code, and `verbalize.py` is ICAO-specific. `THIRD_PARTY.md` records
+skywatch as a design reference. Any future copy keeps skywatch's copyright header in the file and adds a line there.
 - **Reusable with attribution** (MIT notice kept in any copied file):
   - The `ASREngine` Protocol plus a `TranscriptionResult` dataclass with provenance (engine, model, language, segments with `avg_word_prob`). We use the same contract, so whisper.cpp can be swapped in later.
   - The lazy-loading `FasterWhisperEngine`, which imports faster-whisper on first use so CI runs without the ASR extra. `decoding/asr.py` follows this pattern.
@@ -177,7 +279,10 @@ The constants are placeholders, to be calibrated on the eval set with a reliabil
 
 ### Rebroadcast / simulcast linking (`rebroadcast.py`)
 Airings are linked with union-find when both hold:
-- Body CER ≤ 0.2 between them.
+- `similarity.text_similarity(body_a, body_b) ≥ 0.8` (that is, body CER ≤ 0.2). `text_similarity` implements the
+  `text_similarity(a, b) -> float | None` contract in `docs/database.md` on `db/schema-v1`: `.`/`?` wildcards,
+  `None` when too few known characters, a value in [0, 1], and agreement with the DB's built-in wildcard Hamming on
+  equal-length bodies. A `None` result never links.
 - They are within 24 h of each other.
 
 Within a group, each airing gets a relation:

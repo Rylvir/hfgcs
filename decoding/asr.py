@@ -102,7 +102,9 @@ class AsrConfig:
     compute_type: str = "int8"  # "float16" on GPU
     cpu_threads: int = 8
     beam_size: int = 5
-    vad_filter: bool = True
+    # Silero VAD off by default: on weak HF speech it drops whole character
+    # groups (eval: gold body CER 0.82 -> 0.55 with it off; see docs/decoding.md).
+    vad_filter: bool = False
     vad_parameters: dict = field(
         default_factory=lambda: {
             "threshold": 0.35,  # HF speech under noise scores low; 0.5 drops weak chars
@@ -111,7 +113,9 @@ class AsrConfig:
             "speech_pad_ms": 400,
         }
     )
-    condition_on_previous_text: bool = False  # stops repetition loops on long reads
+    # On since the eval (silver 0.60 -> 0.42 with VAD off); the loops it causes on long reads are removed
+    # by tokens.drop_repetition_loops before parsing.
+    condition_on_previous_text: bool = True
     temperature: tuple = (0.0, 0.2, 0.4)
     compression_ratio_threshold: Optional[float] = 2.4
     log_prob_threshold: Optional[float] = -1.0

@@ -135,3 +135,16 @@ def test_snap_keeps_split_xray_joinable():
 
     words = snap_words([{"word": "X"}, {"word": "-ray,"}])
     assert [t.norm for t in tokenize(words)] == ["xray"]
+
+
+def test_config_overrides_are_relative_to_v01_and_best_is_default():
+    from decoding.asr import AsrConfig
+    from decoding.evaluate import CONFIGS, split_config
+
+    base, _ = split_config(CONFIGS["baseline"])
+    assert base.vad_filter is True  # v0.1 rows keep their cache keys
+    best, post = split_config(CONFIGS["best"])
+    assert best.key() == AsrConfig().key()
+    assert post == {"snap": True}
+    assert split_config(CONFIGS["nv_cond_prev"])[0].key() == AsrConfig().key()
+    assert base.condition_on_previous_text is False

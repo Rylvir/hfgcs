@@ -32,7 +32,11 @@ _VAD_DEFAULT = {
 _NOSKIP = {"log_prob_threshold": None, "no_speech_threshold": None, "compression_ratio_threshold": None}
 
 CONFIGS: dict[str, dict] = {
+    # Overrides are relative to the v0.1 smoke-test defaults (VAD on, see
+    # V01_BASE) so every row in the docs table keeps its cache key.
     "baseline": {},  # v0.1 defaults from the first smoke test
+    # = AsrConfig() + snap_words
+    "best": {"vad_filter": False, "condition_on_previous_text": True, "post_snap": True},
     # prompt / hotwords
     "no_prompt": {"prompt": None},
     "no_prompt_no_hot": {"prompt": None, "hotwords": False},
@@ -78,6 +82,8 @@ CONFIGS: dict[str, dict] = {
     "nv_pre_denoise": {"vad_filter": False, "preprocess": "bp_denoise_norm"},
     "nv_pre_wide": {"vad_filter": False, "preprocess": "wide_norm"},
     "nv_cond_prev": {"vad_filter": False, "condition_on_previous_text": True},
+    "nv_cond_prev_snap": {"vad_filter": False, "condition_on_previous_text": True, "post_snap": True},
+    "nv_pre_denoise_snap": {"vad_filter": False, "preprocess": "bp_denoise_norm", "post_snap": True},
     "nv_no_hst": {"vad_filter": False, "hallucination_silence_threshold": None},
     # closed vocabulary
     "vocab": {"vocab_constrain": True},
@@ -194,12 +200,15 @@ def load_subset(path: Path, subset: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------- running
+V01_BASE = {"vad_filter": True, "condition_on_previous_text": False}
+
+
 def split_config(overrides: dict):
     from .asr import AsrConfig
 
     asr_over = {k: v for k, v in overrides.items() if not k.startswith("post_")}
     post = {k[5:]: v for k, v in overrides.items() if k.startswith("post_")}
-    return replace(AsrConfig(), **asr_over), post
+    return replace(AsrConfig(), **{**V01_BASE, **asr_over}), post
 
 
 def transcribe_cached(transcriber, label: dict, cache: Path) -> dict:
