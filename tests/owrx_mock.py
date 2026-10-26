@@ -20,6 +20,13 @@ PROFILES = {
     "airspy|hfgcs-13200": {"center_freq": 13_200_000, "samp_rate": 768_000, "name": "HFGCS 13200"},
     "airspy|hfgcs-15016": {"center_freq": 15_016_000, "samp_rate": 768_000, "name": "HFGCS 15016"},
     "airspy|wide-11000": {"center_freq": 11_000_000, "samp_rate": 768_000, "name": "Wide 11000"},
+    # OpenWebRX+ style names: "<SDR name> <profile name>"
+    "airspyhf|hfgcs-8992": {
+        "center_freq": 8_992_000, "samp_rate": 768_000, "name": "Airspy HF+ HFGCS 8992 kHz",
+    },
+    "airspyhf|hfgcs-15016": {
+        "center_freq": 15_016_000, "samp_rate": 768_000, "name": "Airspy HF+ HFGCS 15016 kHz",
+    },
 }
 
 
@@ -38,7 +45,12 @@ class MockOpenWebRX:
         audio=None,  # callable(conn_index) -> list of (pcm int16, smeter linear or None)
         events=None,  # {(conn_index, frame_index): ("config", {...}) | ("close", None)}
         frame_samples=240,
+        magic_key="",  # OpenWebRX+ "magic_key": needed to select a locked profile
+        locked=(),  # profile ids that are key_locked
     ):
+        self.magic_key = magic_key
+        self.locked = set(locked)
+        self.selects: list[str] = []  # profile ids actually activated via selectprofile
         self.profile = profile
         self.compression = compression
         self.audio = audio or (lambda conn: [(tone_pcm(1000, 2.0), 1e-3)])
@@ -84,6 +96,10 @@ class MockOpenWebRX:
             },
         })
 
+    def switch_profile(self, profile):
+        """Simulate the owner selecting another profile (pushed to every client)."""
+        self.profile = profile
+
     def all_sent(self) -> list[dict]:
         return [json.loads(m) for conn in self.received for m in conn if m.startswith("{")]
 
@@ -98,6 +114,7 @@ class MockOpenWebRX:
         except Exception:
             self.headers.append({})
         streaming = False
+        seen_profile = None
         frames = []
         codec, counter = ImaAdpcmCodec(), 0
         for pcm, smeter in self.audio(conn):
@@ -119,20 +136,37 @@ class MockOpenWebRX:
                             "value": [{"id": k, "name": v["name"]} for k, v in PROFILES.items()],
                         }))
                         ws.send(self.config_msg())
+                        seen_profile = self.profile
                     else:
                         data = json.loads(msg)
                         if data.get("type") == "dspcontrol" and data.get("action") == "start":
                             streaming = True
                         elif data.get("type") == "selectprofile":
-                            self.profile = data["params"]["profile"]
+                            want = data["params"]["profile"]
+                            key = data["params"].get("key")
+                            if (want in self.locked or self.profile in self.locked) and self.magic_key and (
+                                key != self.magic_key
+                            ):
+                                ws.send(json.dumps({
+                                    "type": "log_message",
+                                    "value": "This profile is locked, keeping current profile.",
+                                }))
+                            else:
+                                self.profile = want
+                                self.selects.append(want)
                             ws.send(self.config_msg())
+                            seen_profile = self.profile
+                if seen_profile is not None and self.profile != seen_profile:
+                    # someone else (another listener / the owner) switched profile
+                    seen_profile = self.profile
+                    ws.send(self.config_msg())
                 if streaming and idx < len(frames):
                     ev = self.events.get((conn, idx))
                     if ev and ev[0] == "close":
                         ws.close()
                         return
                     if ev and ev[0] == "config":
-                        self.profile = ev[1]
+                        self.profile = seen_profile = ev[1]
                         ws.send(self.config_msg())
                     pcm, smeter = frames[idx]
                     if smeter is not None:

@@ -20,9 +20,20 @@ understanding only; no OpenWebRX code is copied, see THIRD_PARTY.md):
   "high_cut": .., "offset_freq": <Hz from center>, "squelch_level": -150}}``
   then ``{"type": "dspcontrol", "action": "start"}`` starts this client's own
   demodulator. It only moves *our* demodulator inside the current window.
-* ``selectprofile`` and ``setfrequency`` retune the shared hardware for every
-  listener. This module never sends ``setfrequency`` and only sends
-  ``selectprofile`` when ``allow_profile_switch`` is set.
+* ``selectprofile`` (``{"type": "selectprofile", "params": {"profile":
+  "<sdr_id>|<profile_id>", "key": <unlock key, optional>}}``) and
+  ``setfrequency`` retune the shared hardware for every listener. This module
+  never sends ``setfrequency``. It sends ``selectprofile`` only when
+  ``allow_profile_switch`` is set, or once for an explicit one-shot
+  :meth:`OpenWebRXSource.select_profile_once`.
+* OpenWebRX+ can lock profiles ("key_locked"). A locked profile is only
+  selected when ``params.key`` equals the server's magic key; otherwise the
+  server answers with ``{"type": "log_message", "value": "This profile is
+  locked, keeping current profile."}`` and re-sends the current ``config``.
+  Switching profiles faster than about every 10 s raises a "robot score" and
+  can get the client banned, hence ``min_profile_interval_s``.
+* The ``profiles`` message lists ``{"id": "<sdr_id>|<profile_id>", "name":
+  "<SDR name> <profile name>"}``, e.g. ``"Airspy HF+ HFGCS 8992 kHz"``.
 * Binary frames start with a type byte: 1 = waterfall FFT, 2 = audio,
   3 = secondary FFT, 4 = HD audio. Audio is int16 little-endian, or (when
   ``audio_compression == "adpcm"``) IMA ADPCM with a resync header every
@@ -266,6 +277,9 @@ class OpenWebRXSource(BaseSource):
         self._last_tune = float("-inf")
         self._last_profile = float("-inf")
         self._dsp_started = False
+        # "recording" or "waiting": logged once per change, not per poll.
+        self.state: str | None = None
+        self.log_messages: list[str] = []  # server log_message texts (e.g. "profile is locked")
 
     # -- connection ---------------------------------------------------------
     @property
@@ -334,12 +348,17 @@ class OpenWebRXSource(BaseSource):
             except Exception:  # pragma: no cover
                 pass
 
-    def _send(self, obj: dict) -> None:
+    def _send(self, obj: dict, *, one_shot_select: bool = False) -> None:
         if obj.get("type") == "setfrequency":  # pragma: no cover - guard
             raise AssertionError("hfgcs never changes the OpenWebRX center frequency")
-        if obj.get("type") == "selectprofile" and not self.settings.allow_profile_switch:  # pragma: no cover
-            raise AssertionError("selectprofile needs allow_profile_switch")
-        self.sent.append(obj)
+        if obj.get("type") == "selectprofile" and not (self.settings.allow_profile_switch or one_shot_select):
+            raise AssertionError("selectprofile needs allow_profile_switch")  # pragma: no cover
+        # Keep a copy for logs/tests with any unlock key redacted.
+        params = obj.get("params")
+        if isinstance(params, dict) and "key" in params:
+            self.sent.append({**obj, "params": {**params, "key": "<redacted>"}})
+        else:
+            self.sent.append(obj)
         self.ws.send(json.dumps(obj))
 
     def _reconnect(self) -> None:
@@ -348,7 +367,7 @@ class OpenWebRXSource(BaseSource):
         self._gap = True
         while True:
             self.failures += 1
-            if self.failures > self.settings.max_reconnects:
+            if self.failures > self.settings.max_reconnects and not self.settings.wait_for_profile:
                 raise SourceError(f"{self.url}: giving up after {self.settings.max_reconnects} reconnects")
             delay = min(
                 self.settings.backoff_max_s,
@@ -362,12 +381,16 @@ class OpenWebRXSource(BaseSource):
                 log.warning("reconnect failed: %s", exc)
                 continue
             if self.dial_khz is not None:
-                reason = self.refusal(self.dial_khz)
-                if reason is None:
+                self._dsp_started = False
+                outside = self._outside_reason(self.dial_khz)
+                if outside is None:
                     self._apply_tune(self.dial_khz)
+                    self._set_state("recording", self.dial_khz)
+                elif self.settings.wait_for_profile:
+                    self._idle(outside)
                 else:
-                    log.warning("after reconnect, %s kHz is not receivable: %s", self.dial_khz, reason)
-                    self.off_channel_reason = reason
+                    log.warning("after reconnect, %s kHz is not receivable: %s", self.dial_khz, outside)
+                    self.off_channel_reason = outside
             return
 
     # -- messages ------------------------------------------------------------
@@ -409,6 +432,9 @@ class OpenWebRXSource(BaseSource):
             raise SourceError(f"server asked us to back off: {data.get('reason') or value}")
         elif kind in ("sdr_error", "demodulator_error"):
             log.warning("OpenWebRX %s: %s", kind, value)
+        elif kind == "log_message" and value is not None:
+            self.log_messages.append(str(value))
+            log.info("OpenWebRX log: %s", value)
 
     def _update_window(self) -> None:
         cfg = self.config
@@ -421,43 +447,85 @@ class OpenWebRXSource(BaseSource):
             str(cfg.get("profile_id") or ""),
         )
         old, self.window = self.window, new
-        if old is not None and (old.center_hz, old.samp_rate) != (new.center_hz, new.samp_rate):
-            log.warning("OpenWebRX window changed to %s (someone switched profile)", new.label)
-            if self.dial_khz is not None and self.ws is not None:
+        if old is not None and (old.center_hz, old.samp_rate, old.profile_id, old.sdr_id) != (
+            new.center_hz, new.samp_rate, new.profile_id, new.sdr_id
+        ):
+            log.warning("OpenWebRX window changed to %s (profile switched)", new.label)
+            if self.dial_khz is not None and self.ws is not None and not self._selecting:
                 self._follow_window()
+
+    _idle_gap_sent = False
+    _selecting = False  # True while select_profile_once waits for the new config
 
     def _follow_window(self) -> None:
         """The shared radio moved. Retune inside it, or stop recording; never move it back."""
-        reason = self.refusal(self.dial_khz, switching=False)
+        reason = self._outside_reason(self.dial_khz)
         self._gap = True
         if reason is None:
-            self.off_channel_reason = None
             self._apply_tune(self.dial_khz)
+            self._set_state("recording", self.dial_khz)
+        elif self.settings.wait_for_profile:
+            self._idle(reason)
         else:
             if self.off_channel_reason is None:
                 log.warning("%s kHz is no longer receivable: %s; audio dropped", self.dial_khz, reason)
             self.off_channel_reason = reason
 
+    def _set_state(self, state: str, dial_khz: float, reason: str = "") -> None:
+        if state == self.state:
+            return
+        self.state = state
+        label = self.window.label if self.window else "?"
+        if state == "waiting":
+            log.warning(
+                "WAITING: %g kHz is not in the active %s; idling until a covering profile is selected",
+                dial_khz, label,
+            )
+        else:
+            log.warning("RECORDING: %g kHz is covered by the active %s", dial_khz, label)
+
+    def _idle(self, reason: str) -> None:
+        """Stay connected without our audio; resume when a covering profile appears."""
+        self.off_channel_reason = reason
+        self._gap = True
+        self._set_state("waiting", self.dial_khz, reason)
+
     # -- tuning --------------------------------------------------------------
+    def _outside_reason(self, dial_khz: float) -> str | None:
+        """Why the active window does not cover ``dial_khz`` (None if it does)."""
+        if self.window is None:
+            return "not connected"
+        s = self.settings
+        if self.window.covers(dial_khz * 1e3, s.low_cut_hz, s.high_cut_hz, s.span_margin):
+            return None
+        return f"outside the active {self.window.label}"
+
     def refusal(self, dial_khz: float, switching: bool | None = None) -> str | None:
         if self.window is None:
             return "not connected (open the source first)"
         s = self.settings
-        if self.window.covers(dial_khz * 1e3, s.low_cut_hz, s.high_cut_hz, s.span_margin):
+        if self._outside_reason(dial_khz) is None:
             return None
         if switching is None:
             switching = s.allow_profile_switch
-        if switching:
-            return None
+        if switching or s.wait_for_profile:
+            return None  # switch (allowed) or wait for the owner to select a covering profile
         return (
             f"outside the active {self.window.label}. The OpenWebRX radio is shared, so hfgcs "
             "does not switch profiles or move the center frequency; ask the owner to select a "
-            "profile that covers it, or set openwebrx.allow_profile_switch = true"
+            "profile that covers it, run with --wait-for-profile, or set "
+            "openwebrx.allow_profile_switch = true"
         )
 
     def tune(self, dial_khz: float) -> None:
-        super().tune(dial_khz)  # raises TuneRefused outside the window (unless allowed)
-        self._apply_tune(float(dial_khz))
+        super().tune(dial_khz)  # raises TuneRefused outside the window (unless allowed/waiting)
+        dial_khz = float(dial_khz)
+        outside = self._outside_reason(dial_khz)
+        if outside is not None and not self.settings.allow_profile_switch:
+            self._idle(outside)  # wait_for_profile: never retune the shared radio
+            return
+        self._apply_tune(dial_khz)
+        self._set_state("recording", dial_khz)
 
     def _apply_tune(self, dial_khz: float) -> None:
         s = self.settings
@@ -485,7 +553,11 @@ class OpenWebRXSource(BaseSource):
         """Only reached with allow_profile_switch=True."""
         s = self.settings
         profile = s.profile or next(
-            (p.get("id") for p in self.profiles if str(p.get("name", "")).endswith(f"HFGCS {dial_khz:g}")),
+            (
+                p.get("id")
+                for p in self.profiles
+                if str(p.get("name", "")).endswith((f"HFGCS {dial_khz:g}", f"HFGCS {dial_khz:g} kHz"))
+            ),
             None,
         )
         if not profile:
@@ -506,12 +578,85 @@ class OpenWebRXSource(BaseSource):
                 return
         raise TuneRefused(f"profile {profile} did not bring {dial_khz:g} kHz into the window")
 
+    # -- one-shot profile selection ----------------------------------------------
+    def find_profile(self, name: str) -> dict | None:
+        """A profile by id ("sdr|profile"), exact name, or name suffix ("HFGCS 8992 kHz")."""
+        for match in (
+            lambda p: p.get("id") == name,
+            lambda p: p.get("name") == name,
+            lambda p: str(p.get("name", "")).endswith(" " + name),
+        ):
+            hits = [p for p in self.profiles if match(p)]
+            if len(hits) == 1:
+                return hits[0]
+            if len(hits) > 1:
+                raise SourceError(f"profile name {name!r} is ambiguous: {[p.get('id') for p in hits]}")
+        return None
+
+    def active_profile_id(self) -> str:
+        w = self.window
+        return f"{w.sdr_id}|{w.profile_id}" if w else ""
+
+    def select_profile_once(self, name: str, key: str | None) -> bool:
+        """Select profile ``name`` exactly once (a deliberate, owner-approved retune).
+
+        Sends at most one ``selectprofile``. Returns False if it was already
+        active (nothing sent), True once the server confirms the switch.
+        Raises SourceError if the server refuses (locked, wrong key) or does
+        not confirm. ``key`` is sent to the server only, never logged.
+        """
+        if self.ws is None or self.window is None:
+            raise SourceError("not connected")
+        if not self.profiles:  # profiles usually arrive with the handshake
+            deadline = self._clock() + self.settings.handshake_timeout_s
+            while not self.profiles and self._clock() < deadline:
+                try:
+                    self._handle(self.ws.recv(timeout=max(0.05, deadline - self._clock())))
+                except TimeoutError:
+                    break
+        profile = self.find_profile(name)
+        if profile is None:
+            known = ", ".join(str(p.get("name")) for p in self.profiles) or "none"
+            raise SourceError(f"no OpenWebRX profile matches {name!r} (known: {known})")
+        pid = str(profile["id"])
+        if pid == self.active_profile_id():
+            log.warning("profile %s (%s) is already active; nothing to do", pid, profile.get("name"))
+            return False
+        params = {"profile": pid}
+        if key:
+            params["key"] = key
+        log.warning("selecting OpenWebRX profile %s (%s) once (one-shot)", pid, profile.get("name"))
+        self._selecting = True
+        n_logs = len(self.log_messages)
+        try:
+            self._send({"type": "selectprofile", "params": params}, one_shot_select=True)
+            deadline = self._clock() + max(self.settings.handshake_timeout_s, 15.0)
+            while self._clock() < deadline:
+                try:
+                    self._handle(self.ws.recv(timeout=max(0.05, deadline - self._clock())))
+                except TimeoutError:
+                    break
+                if self.active_profile_id() == pid:
+                    log.warning("OpenWebRX confirmed profile %s: %s", pid, self.window.label)
+                    return True
+                refused = [m for m in self.log_messages[n_logs:] if "locked" in m.lower()]
+                if refused:
+                    raise SourceError(f"server refused profile {pid}: {refused[0]}")
+        finally:
+            self._selecting = False
+        raise SourceError(f"server did not confirm profile {pid} (still {self.active_profile_id()})")
+
     # -- streaming -------------------------------------------------------------
     def read(self, timeout: float | None = None) -> Chunk | None:
         if self.ws is None:
             self._reconnect()
         deadline = self._clock() + (1.0 if timeout is None else timeout)
         while True:
+            if self.off_channel_reason is not None and self._gap:
+                # Tell the scanner now, so it closes a recording in progress.
+                self._gap = False
+                self._idle_gap_sent = True
+                return Chunk(np.zeros(0, np.float32), self.sample_rate, level_db=None, gap=True)
             remaining = deadline - self._clock()
             if remaining <= 0:
                 return Chunk(np.zeros(0, np.float32), self.sample_rate, level_db=self.last_level_db)
@@ -535,5 +680,6 @@ class OpenWebRXSource(BaseSource):
             if audio is None or len(audio) == 0 or self.off_channel_reason is not None:
                 continue
             self.failures = 0
-            gap, self._gap = self._gap, False
+            gap, self._gap = self._gap or self._idle_gap_sent, False
+            self._idle_gap_sent = False
             return Chunk(audio, self.sample_rate, level_db=self.last_level_db, gap=gap)

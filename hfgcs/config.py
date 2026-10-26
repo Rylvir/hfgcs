@@ -128,6 +128,11 @@ class OpenWebRXSettings:
     # radio for every listener) unless this is explicitly set.
     allow_profile_switch: bool = False
     profile: str = ""  # profile id ("sdr|profile") to select, only with allow_profile_switch
+    # Long-running/service mode: if the channel is not in the active profile,
+    # stay connected and idle (no retune), and start recording by itself when
+    # the owner selects a covering profile. The scanner turns this on by
+    # default when --duration is not given.
+    wait_for_profile: bool = False
     low_cut_hz: float = 300.0
     high_cut_hz: float = 3000.0
     output_rate: int = 12_000  # audio rate requested from the server

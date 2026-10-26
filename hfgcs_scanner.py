@@ -12,6 +12,7 @@
 import argparse
 import dataclasses
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 
@@ -176,6 +177,22 @@ def apply_cli(cfg: Config, args) -> Config:
         owrx["url"] = args.url
     if args.allow_profile_switch:
         owrx["allow_profile_switch"] = True
+    wait = getattr(args, "wait_for_profile", None)
+    long_running = (
+        hasattr(args, "duration")
+        and args.duration is None
+        and not getattr(args, "probe", False)
+        and not getattr(args, "select_profile", None)
+    )
+    if wait is None and long_running:
+        wait = True  # long-running/service mode: idle until a covering profile is active
+    if wait is not None and wait != cfg.openwebrx.wait_for_profile:
+        owrx["wait_for_profile"] = bool(wait)
+    source = args.source or cfg.source
+    # --receiver-id names the receiver in the catalog whatever the backend
+    # (the per-source settings otherwise win over the top-level value).
+    if args.receiver_id and source == "openwebrx":
+        owrx["receiver_id"] = args.receiver_id
     if owrx:
         changes["openwebrx"] = dataclasses.replace(cfg.openwebrx, **owrx)
     kiwi = {}
@@ -183,6 +200,8 @@ def apply_cli(cfg: Config, args) -> Config:
         kiwi["hosts"] = tuple(args.kiwi_host)
     if args.kiwi_ident:
         kiwi["ident"] = args.kiwi_ident
+    if args.receiver_id and source == "kiwisdr":
+        kiwi["receiver_id"] = args.receiver_id
     if kiwi:
         changes["kiwisdr"] = dataclasses.replace(cfg.kiwisdr, **kiwi)
     fil = {}
@@ -196,6 +215,8 @@ def apply_cli(cfg: Config, args) -> Config:
         fil["center_khz"] = args.center_khz
     if args.realtime:
         fil["realtime"] = True
+    if args.receiver_id and source == "file":
+        fil["receiver_id"] = args.receiver_id
     if fil:
         changes["file"] = dataclasses.replace(cfg.file, **fil)
     return dataclasses.replace(cfg, **changes) if changes else cfg
@@ -219,6 +240,27 @@ def build_parser():
         action="store_true",
         help="allow selecting another SDR profile on the shared OpenWebRX (off by default)",
     )
+    g.add_argument(
+        "--wait-for-profile",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="if the channel is not in the active profile, stay connected and idle until the owner "
+        "selects a covering profile, and stop/idle again if it moves away (never retunes). "
+        "Default: on when --duration is not given, off for one-shot runs (which exit 2 instead)",
+    )
+    g.add_argument(
+        "--select-profile",
+        metavar="NAME",
+        help="one-shot: select this OpenWebRX profile (id, name or name suffix such as "
+        "'HFGCS 8992 kHz') exactly once using the unlock key from the environment, then exit",
+    )
+    g.add_argument(
+        "--unlock-key-env",
+        default="HFGCS_OWRX_UNLOCK_KEY",
+        metavar="VAR",
+        help="environment variable holding the OpenWebRX+ unlock (magic) key for --select-profile "
+        "(default: %(default)s). The key is never printed or logged",
+    )
     g = p.add_argument_group("kiwisdr")
     g.add_argument("--kiwi-host", action="append", help="host:port (repeatable, tried in order)")
     g.add_argument("--kiwi-ident", help="name shown in the Kiwi user list")
@@ -232,10 +274,47 @@ def build_parser():
     return p
 
 
+def select_profile(cfg: Config, name: str, key_env: str) -> int:
+    """``--select-profile``: one deliberate profile switch, then exit."""
+    from hfgcs.sources.openwebrx import OpenWebRXSource
+
+    key = os.environ.get(key_env, "")
+    if not key:
+        print(
+            f"Refusing --select-profile: environment variable {key_env} is not set "
+            "(profile switching on this server needs the unlock key)",
+            file=sys.stderr,
+        )
+        return 1
+    src = OpenWebRXSource(cfg.openwebrx)
+    try:
+        src.open()
+        before = src.active_profile_id()
+        switched = src.select_profile_once(name, key)
+        after = src.active_profile_id()
+        done = "yes" if switched else "no (already active)"
+        print(f"profile before: {before}; after: {after}; switched: {done}")
+        print(f"active window: {src.window.label}")
+        return 0
+    except SourceError as exc:
+        print(f"--select-profile failed: {exc}", file=sys.stderr)
+        return 3
+    finally:
+        del key
+        src.close()
+
+
 def main(argv=None):
     args = build_parser().parse_args(argv)
     level = logging.INFO if args.verbose else logging.WARNING
-    logging.basicConfig(level=level, format="%(levelname)s %(message)s")
+    logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(message)s")
+    if args.select_profile:
+        try:
+            cfg = apply_cli(load_config(args.config), args)
+        except ValueError as exc:
+            print(f"Bad configuration: {exc}", file=sys.stderr)
+            return 1
+        return select_profile(cfg, args.select_profile, args.unlock_key_env)
     scanner = None
     try:
         cfg = apply_cli(load_config(args.config), args)
