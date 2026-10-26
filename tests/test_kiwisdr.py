@@ -9,7 +9,7 @@ import pytest
 
 from hfgcs.config import KiwiSettings
 from hfgcs.sources import SourceError, TuneRefused
-from hfgcs.sources.kiwisdr import KiwiSource, parse_wav_header, reset_etiquette_state
+from hfgcs.sources.kiwisdr import KiwiSource, nominal_rate, parse_wav_header, reset_etiquette_state
 
 FAKE = str(Path(__file__).with_name("fake_kiwirecorder.py"))
 GOOD_STATUS = {"status": "active", "offline": "no", "users": "1", "users_max": "8"}
@@ -243,3 +243,56 @@ def test_accepts_hfgcs_monitor_ident(ident):
 def test_rejects_placeholder_idents(ident):
     with pytest.raises(SourceError, match="ident"):
         make(["a.example:8073"], ident=ident).check_authorised()
+
+
+@pytest.mark.parametrize(
+    "measured,nominal",
+    [(11999, 12000), (12001, 12000), (12000, 12000), (20249, 20250), (48000, 48000)],
+)
+def test_nominal_rate_snaps_measured_kiwi_rates(measured, nominal):
+    assert nominal_rate(measured) == nominal
+
+
+def test_measured_rate_in_wav_header_is_usable(tmp_path, monkeypatch):
+    # Real kiwirecorder writes the measured rate (e.g. 11999) into the --nc-wav header.
+    from hfgcs.dsp import AudioFrontEnd
+
+    monkeypatch.setenv("FAKE_KIWI_RATE", "11999")
+    with make(["kiwi.example:8073"]) as src:
+        src.tune(11175)
+        audio, _ = read_audio(src, 0.5)
+        assert len(audio)
+        assert src.sample_rate == 12000
+        AudioFrontEnd(src.sample_rate, 8000)  # 11999 -> 8000 used to raise ValueError
+
+
+@pytest.mark.parametrize("bad", ["stall", "zero"])
+def test_watchdog_drops_silent_session_and_rotates(tmp_path, bad):
+    clock = Clock()
+    src = make([f"{bad}.example:8073", "good.example:8073"], clock=clock, stall_timeout_s=20)
+    with src:
+        src.tune(11175)
+        got = []
+        for _ in range(200):
+            c = src.read(0.2)
+            if len(c.samples) and np.any(c.samples):
+                got.append(c)
+                break
+            clock.t += 5
+        assert got and src.current.host == "good.example"
+        assert any(f"{bad}.example:8073: no audio for 20 s" in m for m in src.log)
+        assert src.skip_reason(src.hosts[0]).startswith("retired")
+    hosts = [a[a.index("-s") + 1] for a in calls(tmp_path)]
+    assert hosts[:2] == [f"{bad}.example", "good.example"]
+
+
+def test_scanner_capture_receiver_id_follows_kiwi_host(tmp_path):
+    import hfgcs_scanner
+    from hfgcs.config import Config
+
+    src = make(["a.example:8073", "b.example:8074"])
+    sc = hfgcs_scanner.HFGCSScanner(Config(record_dir=tmp_path), src)
+    src.current = src.hosts[0]
+    assert sc.capture_for(11175.0, 12000).receiver_id == "kiwi-a.example-8073"
+    src.current = src.hosts[1]
+    assert sc.capture_for(11175.0, 12000).receiver_id == "kiwi-b.example-8074"
