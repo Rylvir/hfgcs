@@ -1,0 +1,2 @@
+{"timestamp": "2031-01-01T00:06:10.500000+00:00", "frequency_khz": 11175.0, "file": "recordings/HFGCS_11175kHz_20310101_000610.wav", "duration_sec": 70.0, "noise_floor_db": -71.3, "notes": "USB voice candidate - review for EAM"}
+{"timestamp": "2031-01-01T00:06:12.000000+00:00", "frequency_khz": 8992.0, "file": "recordings/HFGCS_8992kHz_20310101_000612.wav", "duration_sec": 71.0, "noise_floor_db": -74.0, "notes": "USB voice candidate - review for EAM"}
