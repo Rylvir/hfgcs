@@ -2,6 +2,7 @@
     python3 -m unittest discover -s tests -v
 """
 import contextlib
+import importlib
 import importlib.util
 import io
 import sqlite3
@@ -13,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 FIX = ROOT / "tests" / "fixtures"
 sys.path.insert(0, str(ROOT / "scripts"))
-import hfgcs_db  # noqa: E402
+hfgcs_db = importlib.import_module("hfgcs_db")
 
 
 def run(*argv):
@@ -38,6 +39,12 @@ class DbTest(unittest.TestCase):
     def q(self, sql, *p):
         return self.con.execute(sql, p).fetchall()
 
+    def link_kinds(self):
+        return dict(self.q("SELECT link_kind, count(*) FROM message_links GROUP BY 1"))
+
+    def link_methods(self):
+        return self.q("SELECT DISTINCT method FROM message_links")
+
     def load_fake_pipeline(self):
         self.con.executescript((FIX / "fake_pipeline.sql").read_text())
         self.con.commit()
@@ -61,13 +68,14 @@ class DbTest(unittest.TestCase):
         with self.assertRaises(sqlite3.IntegrityError):
             self.con.execute("INSERT INTO messages(heard_utc, msg_type) VALUES ('2031-01-01 00:00', 'EAM')")
         with self.assertRaises(sqlite3.IntegrityError):
-            self.con.execute("INSERT INTO messages(heard_utc, msg_type) VALUES ('2031-01-01T00:00:00Z', 'NOPE')")
+            self.con.execute("INSERT INTO messages(heard_utc, msg_type) "
+                             "VALUES ('2031-01-01T00:00:00Z', 'NOPE')")
 
     def test_link_simulcast_and_rebroadcast(self):
         self.load_fake_pipeline()
         rc, out = run("--db", self.db, "link")
         self.assertEqual(rc, 0)
-        kinds = dict(self.q("SELECT link_kind, count(*) FROM message_links GROUP BY 1"))
+        kinds = self.link_kinds()
         self.assertEqual(kinds, {"simulcast": 1, "rebroadcast": 2})
         self.assertEqual(self.q("SELECT n_messages, n_airings, canonical_text FROM message_clusters"),
                          [(3, 2, "ZZTESTCCCCCCCCCCCCCCCCCCCCCCCC")])
@@ -84,14 +92,15 @@ class DbTest(unittest.TestCase):
         # settings-table override: with a 0.5 s simulcast window the copies 1 s apart become a rebroadcast
         run("--db", self.db, "settings", "link.simulcast_sec", "0.5")
         run("--db", self.db, "link", "--similarity", "builtin")
-        self.assertEqual(dict(self.q("SELECT link_kind, count(*) FROM message_links GROUP BY 1")), {"rebroadcast": 3})
+        self.assertEqual(self.link_kinds(), {"rebroadcast": 3})
         # CLI flag beats the table
         run("--db", self.db, "link", "--similarity", "builtin", "--simulcast-sec", "120")
-        self.assertEqual(dict(self.q("SELECT link_kind, count(*) FROM message_links GROUP BY 1")),
+        self.assertEqual(self.link_kinds(),
                          {"simulcast": 1, "rebroadcast": 2})
         # a 6-minute rebroadcast window keeps only the simulcast pair (the repeat is 30 min later)
-        run("--db", self.db, "link", "--similarity", "builtin", "--simulcast-sec", "120", "--window-hours", "0.1")
-        self.assertEqual(dict(self.q("SELECT link_kind, count(*) FROM message_links GROUP BY 1")), {"simulcast": 1})
+        run("--db", self.db, "link", "--similarity", "builtin",
+            "--simulcast-sec", "120", "--window-hours", "0.1")
+        self.assertEqual(self.link_kinds(), {"simulcast": 1})
         self.assertEqual(run("--db", self.db, "settings", "link.similarity", "bogus")[0], 2)
 
     def test_decoding_similarity_hook_and_fallback(self):
@@ -102,20 +111,22 @@ class DbTest(unittest.TestCase):
         def fake_text_similarity(a, b):
             calls.append((a, b))
             return 1.0 if a[:6] == b[:6] else 0.0
-        pkg = types.ModuleType("decoding"); pkg.__path__ = []
-        mod = types.ModuleType("decoding.similarity"); mod.text_similarity = fake_text_similarity
+        pkg = types.ModuleType("decoding")
+        pkg.__path__ = []
+        mod = types.ModuleType("decoding.similarity")
+        mod.text_similarity = fake_text_similarity
         saved = {k: sys.modules.get(k) for k in ("decoding", "decoding.similarity")}
         try:
             sys.modules["decoding"], sys.modules["decoding.similarity"] = pkg, mod
             rc, out = run("--db", self.db, "link")                       # auto -> decoding
             self.assertTrue(calls)
-            self.assertEqual(self.q("SELECT DISTINCT method FROM message_links"), [("decoding:text_similarity",)])
+            self.assertEqual(self.link_methods(), [("decoding:text_similarity",)])
             mod.text_similarity = lambda a, b: 1.5                       # out of range -> error
             with self.assertRaises(ValueError):
                 run("--db", self.db, "link")
             sys.modules["decoding.similarity"] = None                    # not importable
             run("--db", self.db, "link")                                 # auto -> builtin
-            self.assertEqual(self.q("SELECT DISTINCT method FROM message_links"), [("builtin:wildcard_hamming:v1",)])
+            self.assertEqual(self.link_methods(), [("builtin:wildcard_hamming:v1",)])
             with self.assertRaises(ImportError):
                 run("--db", self.db, "link", "--similarity", "decoding")
         finally:
@@ -138,7 +149,8 @@ class DbTest(unittest.TestCase):
         self._add_short_copy()
         run("--db", self.db, "link", "--similarity", "builtin")      # builtin: equal lengths only
         self.assertEqual(self.q("SELECT n_messages FROM message_clusters"), [(3,)])
-        pkg = types.ModuleType("decoding"); pkg.__path__ = []
+        pkg = types.ModuleType("decoding")
+        pkg.__path__ = []
         mod = types.ModuleType("decoding.similarity")
         mod.text_similarity = lambda a, b: 1.0 - abs(len(a) - len(b)) / max(len(a), len(b)) \
             if a[:6] == b[:6] else 0.0
@@ -169,14 +181,15 @@ class DbTest(unittest.TestCase):
         self._add_short_copy()
         rc, out = run("--db", self.db, "link", "--similarity", "decoding")
         self.assertIn("decoding:text_similarity", out)
-        self.assertEqual(dict(self.q("SELECT link_kind, count(*) FROM message_links GROUP BY 1")),
+        self.assertEqual(self.link_kinds(),
                          {"simulcast": 1, "rebroadcast": 5})
         self.assertEqual(self.q("SELECT n_messages, n_airings FROM message_clusters"), [(4, 3)])
         # on equal lengths the outcome matches the built-in
         run("--db", self.db, "link", "--similarity", "decoding", "--max-len-diff", "0")
         dec = self.q("SELECT message_a, message_b, link_kind FROM message_links ORDER BY 1, 2")
         run("--db", self.db, "link", "--similarity", "builtin")
-        self.assertEqual(dec, self.q("SELECT message_a, message_b, link_kind FROM message_links ORDER BY 1, 2"))
+        builtin = self.q("SELECT message_a, message_b, link_kind FROM message_links ORDER BY 1, 2")
+        self.assertEqual(dec, builtin)
 
     def test_neet_round_trip_exact(self):
         src = FIX / "neet_format_fake.csv"
@@ -188,14 +201,16 @@ class DbTest(unittest.TestCase):
         self.assertEqual(self.q("SELECT count(*) FROM messages")[0][0], 7)
         self.assertEqual(dict(self.q("SELECT msg_type, count(*) FROM messages GROUP BY 1")),
                          {"EAM": 5, "OTHER": 1, "NIL": 1})
-        self.assertEqual(self.q("SELECT addressee FROM messages WHERE broadcast_type='directed'"), [("FAKEBIRD 1",)])
+        self.assertEqual(self.q("SELECT addressee FROM messages WHERE broadcast_type='directed'"),
+                         [("FAKEBIRD 1",)])
 
     def test_neet_export_of_pipeline_rows(self):
         self.load_fake_pipeline()
         rc, _ = run("--db", self.db, "export-neet", str(Path(self.tmp.name) / "p.csv"))
         rows = (Path(self.tmp.name) / "p.csv").read_text().splitlines()
         self.assertEqual(rows[0], ",".join(hfgcs_db.NEET_COLUMNS))
-        self.assertIn("WED,2031.01.01,00:05,TESTCALL,ZZ,ZZTESTCCCCCCCCCCCCCCCCCCCCCCCC,,30,,,,test-rx-a,", rows)
+        self.assertIn("WED,2031.01.01,00:05,TESTCALL,ZZ,ZZTESTCCCCCCCCCCCCCCCCCCCCCCCC,,30,,,,test-rx-a,",
+                      rows)
         self.assertTrue(any(",FOR FAKEBIRD 7," in r for r in rows))
 
     def test_catalog_ingest(self):
@@ -204,7 +219,8 @@ class DbTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(self.q("SELECT start_utc, end_utc FROM captures ORDER BY id LIMIT 1"),
                          [("2031-01-01T00:05:00.500Z", "2031-01-01T00:06:10.500Z")])
-        run("--db", self.db, "ingest-catalog", str(FIX / "scanner_catalog_fake.jsonl"), "--receiver", "test-rx-a")
+        run("--db", self.db, "ingest-catalog", str(FIX / "scanner_catalog_fake.jsonl"),
+            "--receiver", "test-rx-a")
         self.assertEqual(self.q("SELECT count(*) FROM captures")[0][0], 2)
 
     def test_missileer_import(self):
@@ -212,12 +228,13 @@ class DbTest(unittest.TestCase):
         for _ in range(2):
             self.assertEqual(run("--db", self.db, "import-missileer", f)[0], 0)
         self.assertEqual(self.q("SELECT count(*) FROM messages")[0][0], 4)
-        self.assertEqual(dict(self.q("SELECT link_kind, count(*) FROM message_links GROUP BY 1")),
+        self.assertEqual(self.link_kinds(),
                          {"simulcast": 1, "rebroadcast": 1})
         self.assertEqual(self.q("SELECT corrected, review_status, preamble, prefix, heard_at_basis, "
                                 "json_array_length(char_times) FROM messages WHERE is_first_reception=1 "
                                 "AND msg_type='EAM'"), [(1, "reviewed", "ZZFAKE", "ZZ", "voice_onset", 2)])
-        self.assertEqual(self.q("SELECT msg_type, capture_id IS NULL FROM messages WHERE external_id='eam-fake0004'"),
+        self.assertEqual(self.q("SELECT msg_type, capture_id IS NULL FROM messages "
+                                "WHERE external_id='eam-fake0004'"),
                          [("RADIOCHECK", 1)])
         run("--db", self.db, "link")
         self.assertEqual(self.q("SELECT n_messages, n_airings FROM message_clusters"), [(3, 2)])
@@ -225,7 +242,8 @@ class DbTest(unittest.TestCase):
     def test_coverage_comparison(self):
         self.load_fake_pipeline()
         run("--db", self.db, "link")
-        self.assertEqual(run("--db", self.db, "import-daily-counts", str(FIX / "external_daily_counts_fake.csv"))[0], 0)
+        counts_csv = str(FIX / "external_daily_counts_fake.csv")
+        self.assertEqual(run("--db", self.db, "import-daily-counts", counts_csv)[0], 0)
         rows = self.q("SELECT date_utc, external_count, our_eams, our_broadcasts, coverage_pct "
                       "FROM v_coverage_comparison ORDER BY 1")
         # coverage is per distinct message: 2 distinct of 5 external = 40 %

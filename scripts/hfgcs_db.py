@@ -231,7 +231,7 @@ def builtin_similarity(a: str, b: str, min_known: float = 0.5) -> float | None:
     if len(a) != len(b) or not a:
         return None
     compared = matches = 0
-    for x, y in zip(a, b):
+    for x, y in zip(a, b, strict=True):  # equal lengths checked above
         if x in WILDCARDS or y in WILDCARDS:
             continue
         compared += 1
@@ -304,7 +304,7 @@ def consensus(texts: list[str]) -> str:
     lengths = Counter(len(t) for t in texts)
     modal = max(lengths, key=lambda n: (lengths[n], n))
     out = []
-    for chars in zip(*[t for t in texts if len(t) == modal]):
+    for chars in zip(*[t for t in texts if len(t) == modal], strict=True):
         known = [c for c in chars if c not in WILDCARDS]
         out.append(Counter(known).most_common(1)[0][0] if known else ".")
     return "".join(out)
@@ -358,7 +358,7 @@ def cmd_link(args) -> int:
     con.execute("DELETE FROM message_clusters")
     con.executemany(
         """INSERT OR IGNORE INTO message_links(message_a, message_b, link_kind, delta_sec,
-               similarity, method) VALUES (?,?,?,?,?,?)""", [l + (method,) for l in links])
+               similarity, method) VALUES (?,?,?,?,?,?)""", [link + (method,) for link in links])
     # clusters from all links (incl. confirmed/manual ones kept from earlier runs)
     dsu, sim_dsu = DSU(), DSU()
     for a, b, kind in con.execute("SELECT message_a, message_b, link_kind FROM message_links"):
@@ -369,7 +369,7 @@ def cmd_link(args) -> int:
     members = defaultdict(list)
     for mid in list(dsu.p):
         members[dsu.find(mid)].append(mid)
-    for root, ids in members.items():
+    for ids in members.values():
         ids = [i for i in ids if i in info]
         if len(ids) < 2:
             continue
@@ -385,9 +385,10 @@ def cmd_link(args) -> int:
         con.executemany("UPDATE messages SET cluster_id = ? WHERE id = ?",
                         [(cur.lastrowid, i) for i in ids])
     con.commit()
-    kinds = Counter(l[2] for l in links)
+    kinds = Counter(link[2] for link in links)
     ncl = con.execute("SELECT count(*) FROM message_clusters").fetchone()[0]
-    print(f"compared {len(rows)} messages with {method} (max_len_diff {max_len_diff}, simulcast<={simulcast_sec:g}s, "
+    print(f"compared {len(rows)} messages with {method} (max_len_diff {max_len_diff}, "
+          f"simulcast<={simulcast_sec:g}s, "
           f"window {window_s / 3600:g}h, threshold {threshold:g}): {len(links)} links {dict(kinds)}, "
           f"{ncl} clusters")
     return 0
@@ -461,7 +462,8 @@ def cmd_import_missileer(args) -> int:
             seen += 1
             station = r.get("station") or e.get("station") or "unknown"
             rid = ensure_receiver(con, f"missileer:{station}", kind="kiwisdr")
-            con.execute("UPDATE receivers SET url = coalesce(url, 'https://missileer.watch') WHERE id = ?", (rid,))
+            con.execute("UPDATE receivers SET url = coalesce(url, 'https://missileer.watch') WHERE id = ?",
+                        (rid,))
             freq = float(r.get("frequency_khz") or e.get("frequency_khz") or 0) or None
             cap_id = None
             if r.get("clip_url") and r.get("clip_start_at") and freq:
@@ -508,7 +510,8 @@ def cmd_import_missileer(args) -> int:
             upd = ", ".join(f"{k}=excluded.{k}" for k in vals if k not in ("import_key", "origin"))
             con.execute(f"INSERT INTO messages({cols}) VALUES ({', '.join('?' * len(vals))}) "
                         f"ON CONFLICT(import_key) DO UPDATE SET {upd}", list(vals.values()))
-            mid = con.execute("SELECT id FROM messages WHERE import_key=?", (vals["import_key"],)).fetchone()[0]
+            mid = con.execute("SELECT id FROM messages WHERE import_key=?",
+                              (vals["import_key"],)).fetchone()[0]
             up += 1
             if first_id is None:          # receptions are oldest first, first copy leading
                 first_id, first_heard = mid, heard
@@ -610,13 +613,17 @@ def neet_query_sql(q: str, alias: str = "") -> tuple[str, list]:
         elif m := re.fullmatch(r"(PR|CS|F|T)=(.+)", tok, re.I):
             k, v = m.group(1).upper(), m.group(2).strip()
             if k == "PR":
-                clauses.append(f"{p}prefix = ?"); params.append(v.upper())
+                clauses.append(f"{p}prefix = ?")
+                params.append(v.upper())
             elif k == "CS":
-                clauses.append(f"{p}callsign LIKE ?"); params.append(v)
+                clauses.append(f"{p}callsign LIKE ?")
+                params.append(v)
             elif k == "F":
-                clauses.append(f"abs({p}frequency_khz - ?) < 0.5"); params.append(float(v))
+                clauses.append(f"abs({p}frequency_khz - ?) < 0.5")
+                params.append(float(v))
             else:
-                clauses.append(f"{p}msg_type = ?"); params.append(v.upper())
+                clauses.append(f"{p}msg_type = ?")
+                params.append(v.upper())
         elif m := re.fullmatch(r'"(.+)"', tok):
             clauses.append(f"{p}id IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?)")
             params.append('"' + m.group(1).replace('"', '""') + '"')
@@ -647,15 +654,22 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--db", default="hfgcs.db")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    s = sub.add_parser("init"); s.add_argument("--schema", default=str(SCHEMA)); s.set_defaults(fn=cmd_init)
-    s = sub.add_parser("import-neet"); s.add_argument("csv")
+    s = sub.add_parser("init")
+    s.add_argument("--schema", default=str(SCHEMA))
+    s.set_defaults(fn=cmd_init)
+    s = sub.add_parser("import-neet")
+    s.add_argument("csv")
     s.add_argument("--receiver", help="receiver code to attach (e.g. neet-livestream)")
     s.set_defaults(fn=cmd_import_neet)
-    s = sub.add_parser("export-neet"); s.add_argument("out", help="output CSV path or -")
-    s.add_argument("--query", help="NEET-style filter"); s.add_argument("--origin", choices=["pipeline", "neet_import", "manual"])
+    s = sub.add_parser("export-neet")
+    s.add_argument("out", help="output CSV path or -")
+    s.add_argument("--query", help="NEET-style filter")
+    s.add_argument("--origin", choices=["pipeline", "neet_import", "manual"])
     s.set_defaults(fn=cmd_export_neet)
-    s = sub.add_parser("ingest-catalog"); s.add_argument("catalog")
-    s.add_argument("--receiver", default="local-hfplus"); s.add_argument("--kind", default="local_sdr")
+    s = sub.add_parser("ingest-catalog")
+    s.add_argument("catalog")
+    s.add_argument("--receiver", default="local-hfplus")
+    s.add_argument("--kind", default="local_sdr")
     s.add_argument("--recordings-root", help="directory the catalog's 'file' paths are relative to")
     s.set_defaults(fn=cmd_ingest_catalog)
     s = sub.add_parser("link", help="flags override the settings table, which overrides built-ins")
@@ -669,16 +683,21 @@ def main(argv=None) -> int:
                    help="default auto (settings: link.similarity)")
     s.set_defaults(fn=cmd_link)
     s = sub.add_parser("query", epilog=TOKEN_HELP, formatter_class=argparse.RawDescriptionHelpFormatter)
-    s.add_argument("q"); s.add_argument("--days", action="store_true", help="aggregate per day")
-    s.add_argument("--limit", type=int, default=200); s.add_argument("--show-sql", action="store_true")
+    s.add_argument("q")
+    s.add_argument("--days", action="store_true", help="aggregate per day")
+    s.add_argument("--limit", type=int, default=200)
+    s.add_argument("--show-sql", action="store_true")
     s.set_defaults(fn=cmd_query)
     s = sub.add_parser("import-missileer")
     s.add_argument("source", nargs="?", default=MISSILEER_URL, help="URL or local archive.json")
     s.add_argument("--force", action="store_true", help="ignore stored ETag")
     s.set_defaults(fn=cmd_import_missileer)
-    s = sub.add_parser("import-daily-counts", help="hand-entered CSV only"); s.add_argument("csv")
+    s = sub.add_parser("import-daily-counts", help="hand-entered CSV only")
+    s.add_argument("csv")
     s.set_defaults(fn=cmd_import_daily_counts)
-    s = sub.add_parser("settings"); s.add_argument("key", nargs="?"); s.add_argument("value", nargs="?")
+    s = sub.add_parser("settings")
+    s.add_argument("key", nargs="?")
+    s.add_argument("value", nargs="?")
     s.set_defaults(fn=cmd_settings)
     args = ap.parse_args(argv)
     return args.fn(args)
