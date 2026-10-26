@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -16,7 +17,7 @@ from pathlib import Path
 import numpy as np
 
 from .config import Config
-from .dsp import Agc, Squelch, UsbDemodulator, power_db
+from .dsp import Agc, AudioFrontEnd, Squelch, UsbDemodulator, power_db
 
 
 @dataclass
@@ -40,11 +41,45 @@ class Recording:
 
 
 class ChannelCapture:
-    def __init__(self, cfg: Config, frequency_khz: float, start_utc: datetime | None = None):
+    """Squelch and record one channel from any source.
+
+    ``input_kind`` is ``"iq"`` (complex baseband at ``input_rate``, USB
+    demodulated here) or ``"audio"`` (USB audio already demodulated by the
+    receiver, e.g. OpenWebRX or KiwiSDR). ``squelch_level="reported"`` makes
+    the squelch use the receiver's own level (``feed(..., level_db=...)``),
+    for sources whose audio is already AGC'd.
+    """
+
+    def __init__(
+        self,
+        cfg: Config,
+        frequency_khz: float,
+        start_utc: datetime | None = None,
+        *,
+        input_kind: str = "iq",
+        input_rate: int | None = None,
+        receiver_id: str | None = None,
+        squelch_level: str = "slot",
+    ):
         self.cfg = cfg
         self.frequency_khz = frequency_khz
         self.rate = cfg.audio_rate
-        self.demod = UsbDemodulator(cfg.iq_rate, cfg.audio_rate, cfg.usb_low_hz, cfg.usb_high_hz)
+        self.receiver_id = receiver_id or cfg.receiver_id
+        if squelch_level not in ("slot", "reported"):
+            raise ValueError(f"squelch_level must be 'slot' or 'reported', not {squelch_level!r}")
+        self.squelch_level = squelch_level
+        if input_kind == "iq":
+            self.demod = UsbDemodulator(
+                input_rate or cfg.iq_rate, cfg.audio_rate, cfg.usb_low_hz, cfg.usb_high_hz
+            )
+        elif input_kind == "audio":
+            self.demod = AudioFrontEnd(
+                input_rate or cfg.audio_rate, cfg.audio_rate, max(cfg.usb_low_hz, 300.0), cfg.usb_high_hz
+            )
+        else:
+            raise ValueError(f"input_kind must be 'iq' or 'audio', not {input_kind!r}")
+        self.input_kind = input_kind
+        self.input_rate = input_rate or (cfg.iq_rate if input_kind == "iq" else cfg.audio_rate)
         self.agc = Agc(
             cfg.audio_rate,
             cfg.agc_target,
@@ -85,14 +120,19 @@ class ChannelCapture:
         return self.t0 + timedelta(seconds=sample_index / self.rate)
 
     # -- processing -----------------------------------------------------
-    def feed(self, iq: np.ndarray) -> list[Recording]:
-        audio, slot_power = self.demod.process(iq)
+    def feed(self, samples: np.ndarray, level_db: float | None = None) -> list[Recording]:
+        """Process one block (IQ or audio, per ``input_kind``)."""
+        audio, slot_power = self.demod.process(samples)
         if len(audio) == 0:
             return []
         audio = self.agc.process(audio)
         block_s = len(audio) / self.rate
         self.samples += len(audio)
-        event = self.squelch.update(power_db(slot_power), block_s)
+        if self.squelch_level == "reported":
+            level = float("nan") if level_db is None else float(level_db)
+        else:
+            level = power_db(slot_power)
+        event = self.squelch.update(level, block_s)
         done: list[Recording] = []
 
         if self._rec is None:
@@ -135,7 +175,7 @@ class ChannelCapture:
         snrs = self.squelch.snr_history or [float("nan")]
         rec = Recording(
             frequency_khz=self.frequency_khz,
-            receiver_id=self.cfg.receiver_id,
+            receiver_id=self.receiver_id,
             audio_rate=self.rate,
             audio=audio,
             start_utc=self._time(meta["start"]),
@@ -164,7 +204,8 @@ def save_recording(rec: Recording, record_dir: Path, catalog_file: Path) -> dict
     record_dir = Path(record_dir)
     record_dir.mkdir(parents=True, exist_ok=True)
     ts = rec.start_utc.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    path = record_dir / f"HFGCS_{rec.frequency_khz:.0f}kHz_{ts}_{rec.receiver_id}.wav"
+    rx = re.sub(r"[^A-Za-z0-9._-]+", "-", rec.receiver_id).strip("-") or "rx"
+    path = record_dir / f"HFGCS_{rec.frequency_khz:.0f}kHz_{ts}_{rx}.wav"
     sf.write(path, rec.audio, rec.audio_rate, subtype="PCM_16")
     entry = {
         "schema": 2,

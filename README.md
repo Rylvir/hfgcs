@@ -64,6 +64,15 @@ Python + SoapySDR scanner for Airspy HF+ Discovery focused on HFGCS voice (EAM) 
    .venv/bin/python hfgcs_scanner.py
    ```
 
+8. Record without opening the Airspy, through OpenWebRX's own demodulator
+   (only channels inside the profile the server is on; it never switches
+   profiles unless you pass `--allow-profile-switch`):
+   ```bash
+   .venv/bin/python hfgcs_scanner.py --source openwebrx --channel 11175
+   ```
+   Other sources: `--source kiwisdr` (via kiwiclient, with etiquette limits)
+   and `--source file` (WAV/IQ replay). See [docs/sources.md](docs/sources.md).
+
 ## Configuration and output
 All tools share `hfgcs/config.py`: the six HFGCS channels (4724, 6739, 8992,
 11175, 13200, 15016 kHz), receiver ID, squelch, hang time, pre-roll and AGC.

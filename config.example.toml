@@ -9,3 +9,20 @@ close_snr_db = 5.0
 # Or pick named groups from hfgcs.config.FREQUENCY_GROUPS:
 # channel_groups = ["voice"]            # default
 # channel_groups = ["voice", "ale"]     # ALE needs a decoder; USB audio is recorded as-is
+
+# Receiver backend: soapy (default) | openwebrx | kiwisdr | file
+# See docs/sources.md, including the etiquette rules for shared receivers.
+# source = "openwebrx"
+#
+# [openwebrx]
+# url = "https://waterfall.scanplacer.com"
+# allow_profile_switch = false   # never retune the shared radio unless the owner agrees
+#
+# [kiwisdr]
+# enabled = false                # set to true by hand after reading docs/sources.md
+# ident = ""                     # your callsign/name, shown to the sysop
+# hosts = ["kiwisdr.example.org:8073"]
+# channel_khz = 8992
+#
+# [file]
+# path = "recording.wav"

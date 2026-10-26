@@ -8,7 +8,7 @@ a TOML file (see ``config.example.toml``) with :func:`load_config`.
 from __future__ import annotations
 
 import dataclasses
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 try:  # Python 3.11+
@@ -115,6 +115,81 @@ def channels_for(*groups: str) -> tuple[Channel, ...]:
     return tuple(out)
 
 
+# --- audio source settings (see docs/sources.md) ------------------------------
+
+SOURCE_NAMES = ("soapy", "openwebrx", "kiwisdr", "file")
+
+
+@dataclass
+class OpenWebRXSettings:
+    url: str = "https://waterfall.scanplacer.com"
+    receiver_id: str = ""  # default: "owrx-<host>"
+    # Etiquette: never select another SDR profile (it retunes the shared
+    # radio for every listener) unless this is explicitly set.
+    allow_profile_switch: bool = False
+    profile: str = ""  # profile id ("sdr|profile") to select, only with allow_profile_switch
+    low_cut_hz: float = 300.0
+    high_cut_hz: float = 3000.0
+    output_rate: int = 12_000  # audio rate requested from the server
+    # Usable fraction of the profile span (edges roll off).
+    span_margin: float = 0.9
+    # "smeter" = squelch on the server's channel power (the audio is AGC'd);
+    # "audio" = squelch on our own measurement of the audio.
+    squelch: str = "smeter"
+    user_agent: str = "hfgcs/0.1 (+https://github.com/Rylvir/hfgcs)"
+    # Politeness
+    min_tune_interval_s: float = 1.0  # between dspcontrol retunes
+    min_profile_interval_s: float = 11.0  # OpenWebRX bans faster profile switching
+    min_connect_interval_s: float = 10.0  # between (re)connection attempts
+    backoff_initial_s: float = 5.0
+    backoff_max_s: float = 300.0
+    max_reconnects: int = 20  # consecutive failures before giving up
+    handshake_timeout_s: float = 10.0
+
+
+@dataclass
+class KiwiSettings:
+    hosts: tuple[str, ...] = ()  # "host:port", tried in order, one at a time
+    channel_khz: float = 0.0  # the one frequency used on the Kiwi (0 = first scanner channel)
+    receiver_id: str = ""  # default: "kiwi-<host>-<port>"
+    # Installing is not authorising: set this by hand before we contact anyone.
+    enabled: bool = False
+    ident: str = ""  # shown in the sysop's user list; must identify you
+    password: str = ""
+    tlimit_password: str = ""
+    kiwirecorder: str = ""  # path to kiwirecorder.py (default: $KIWIRECORDER or PATH)
+    python: str = ""  # interpreter for kiwirecorder.py (default: this one)
+    low_cut_hz: float = 300.0
+    high_cut_hz: float = 3000.0
+    session_max_s: float = 22 * 60.0  # release the slot before the 30 min limit
+    rest_between_sessions_s: float = 60.0
+    min_users_max: int = 4  # skip receivers with fewer slots
+    allow_proxy: bool = False  # proxy.kiwisdr.com bandwidth is donated
+    blocklist: tuple[str, ...] = ()  # "host" or "host:port"
+    blocklist_file: str = ""
+    retire_after_failure_s: float = 30 * 60.0
+    retire_after_refusal_s: float = 60 * 60.0  # too_busy / ip_limit / kicked
+    backoff_initial_s: float = 30.0
+    backoff_max_s: float = 600.0
+    status_timeout_s: float = 5.0
+    check_status: bool = True  # read /status (slots, offline) before connecting
+    user_agent: str = "hfgcs/0.1 (+https://github.com/Rylvir/hfgcs)"
+
+
+@dataclass
+class FileSettings:
+    path: str = ""
+    format: str = "auto"  # auto | wav | iq-wav | cf32 | cs16 | cu8
+    kind: str = "auto"  # auto | audio | iq  (auto: 2-channel WAV = IQ)
+    sample_rate: int = 0  # needed for raw IQ files
+    center_khz: float = 0.0  # IQ: tuned centre of the recording
+    dial_khz: float = 0.0  # audio: channel the recording was made on (0 = any)
+    realtime: bool = False  # pace reads at the recording's real-time rate
+    loop: bool = False
+    block_seconds: float = 0.05
+    receiver_id: str = ""  # default: "file-<name>"
+
+
 @dataclass
 class Config:
     # The scanner tunes these. Default: the six voice channels only.
@@ -152,6 +227,12 @@ class Config:
     record_dir: Path = Path("recordings")
     catalog_file: Path = Path("hfgcs_catalog.jsonl")
 
+    # Where samples come from: soapy | openwebrx | kiwisdr | file
+    source: str = "soapy"
+    openwebrx: OpenWebRXSettings = field(default_factory=OpenWebRXSettings)
+    kiwisdr: KiwiSettings = field(default_factory=KiwiSettings)
+    file: FileSettings = field(default_factory=FileSettings)
+
     @property
     def channels_khz(self) -> list[float]:
         return [c.dial_khz for c in self.channels]
@@ -163,6 +244,8 @@ class Config:
             raise ValueError("preroll_seconds must be at least 0.8 s")
         if self.close_snr_db > self.open_snr_db:
             raise ValueError("close_snr_db must not exceed open_snr_db")
+        if self.source not in SOURCE_NAMES:
+            raise ValueError(f"source must be one of {SOURCE_NAMES}, not {self.source!r}")
         self.record_dir = Path(self.record_dir)
         self.catalog_file = Path(self.catalog_file)
 
@@ -188,7 +271,21 @@ def load_config(path: str | Path | None = None) -> Config:
             Channel(float(c["dial_khz"]), c.get("note", "")) if isinstance(c, dict) else Channel(float(c))
             for c in data["channels"]
         )
+    for key, cls in (("openwebrx", OpenWebRXSettings), ("kiwisdr", KiwiSettings), ("file", FileSettings)):
+        if key in data:
+            data[key] = _settings(cls, key, data[key])
     return Config(**data)
+
+
+def _settings(cls, section: str, table: dict):
+    if not isinstance(table, dict):
+        raise ValueError(f"[{section}] must be a table")
+    known = {f.name: f for f in dataclasses.fields(cls)}
+    unknown = set(table) - set(known)
+    if unknown:
+        raise ValueError(f"Unknown [{section}] keys: {sorted(unknown)}")
+    values = {k: tuple(v) if isinstance(v, list) else v for k, v in table.items()}
+    return cls(**values)
 
 
 DEFAULT = Config()

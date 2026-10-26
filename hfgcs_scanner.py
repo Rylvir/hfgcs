@@ -1,169 +1,264 @@
-# HFGCS scanner for an Airspy HF+ Discovery (or any SoapySDR device).
+# HFGCS scanner.
 #
-# Scans the HFGCS channels from hfgcs.config, opens a voice-slot squelch on
-# activity, records USB audio with pre-roll until the signal drops for the
-# hang time, and appends one JSON line per recording to the catalog.
+# Reads from any receiver backend in hfgcs.sources (local SoapySDR, an
+# OpenWebRX server's audio websocket, a KiwiSDR through kiwirecorder, or a
+# WAV/IQ file), opens a voice-slot squelch on activity, records USB audio
+# with pre-roll until the signal drops for the hang time, and appends one
+# JSON line per recording to the catalog.
 #
-# SoapySDR comes from the system (sudo apt install python3-soapysdr); it is
-# imported lazily so the DSP and tests run without it.
+# Optional dependencies (SoapySDR, websockets, kiwiclient) are only loaded
+# for the source that needs them, so the DSP and tests run without them.
 
 import argparse
+import dataclasses
+import logging
 import sys
-import time
 from datetime import datetime, timezone
 
 import numpy as np
 
 from hfgcs.capture import ChannelCapture, save_recording
-from hfgcs.config import Config, load_config
+from hfgcs.config import SOURCE_NAMES, Channel, Config, load_config
 from hfgcs.dsp import power_db
+from hfgcs.sources import AudioSource, SourceError, TuneRefused, make_source
 
-SETTLE_SECONDS = 0.12  # discard samples right after a retune
-BLOCK_SAMPLES = 8192
+READ_TIMEOUT = 0.5
 
 
 def utc_now():
     return datetime.now(timezone.utc)
 
 
-def _soapy():
-    try:
-        import SoapySDR
-    except ImportError as exc:  # pragma: no cover - needs hardware stack
-        raise RuntimeError(
-            "SoapySDR Python bindings not found (sudo apt install python3-soapysdr)"
-        ) from exc
-    return SoapySDR
-
-
-def setup_device(cfg: Config):
-    SoapySDR = _soapy()
-    sdr = SoapySDR.Device(cfg.soapy_args)
-    sdr.setSampleRate(SoapySDR.SOAPY_SDR_RX, 0, cfg.iq_rate)
-    # Tuner AGC off by default: it makes dB squelch thresholds meaningless.
-    try:
-        sdr.setGainMode(SoapySDR.SOAPY_SDR_RX, 0, cfg.tuner_agc)
-    except Exception:
-        pass
-    return sdr
-
-
 class HFGCSScanner:
-    def __init__(self, cfg: Config):
-        SoapySDR = _soapy()
-        self.SoapySDR = SoapySDR
+    """Drives one source: tune, feed ChannelCapture, save recordings."""
+
+    def __init__(self, cfg: Config, source: AudioSource | None = None):
         self.cfg = cfg
-        self.sdr = setup_device(cfg)
-        self.rx_stream = self.sdr.setupStream(SoapySDR.SOAPY_SDR_RX, SoapySDR.SOAPY_SDR_CF32)
-        self.sdr.activateStream(self.rx_stream)
-        self._wait_for_samples()
-        self.captures = {f: ChannelCapture(cfg, f) for f in cfg.channels_khz}
+        self.source = source if source is not None else make_source(cfg)
+        self.captures: dict[float, ChannelCapture] = {}
+        self.channels: list[float] = []
+        self.saved: list[dict] = []
+        self.refused: dict[float, str] = {}
+        self.eof = False
 
-    def _wait_for_samples(self, timeout=2.0):
-        """The HF+ stream returns timeouts until the first buffer is ready."""
-        end = time.time() + timeout
-        while time.time() < end:
-            if len(self.read_iq()):
-                return
+    # -- setup ------------------------------------------------------------
+    def start(self) -> list[float]:
+        """Open the source and work out which channels it may tune."""
+        self.source.open()
+        self.channels, self.refused = [], {}
+        for freq in self.cfg.channels_khz:
+            reason = self.source.refusal(freq) if hasattr(self.source, "refusal") else None
+            if reason is None and not self.source.can_tune(freq):
+                reason = "source cannot tune it"
+            if reason is None and self.channels and getattr(self.source, "single_channel", False):
+                reason = f"{self.source.name} records one channel at a time ({self.channels[0]:g} kHz)"
+            if reason is None:
+                self.channels.append(freq)
+            else:
+                self.refused[freq] = reason
+                print(f"  skip {freq:g} kHz: {reason}", file=sys.stderr)
+        if not self.channels:
+            raise TuneRefused(f"{self.source.name}: none of the configured channels can be tuned")
+        return self.channels
 
-    def read_iq(self, nsamps=BLOCK_SAMPLES):
-        buff = np.zeros(nsamps, np.complex64)
-        sr = self.sdr.readStream(self.rx_stream, [buff], nsamps)
-        if sr.ret > 0:
-            return buff[: sr.ret]
-        return np.array([], np.complex64)
+    def capture_for(self, freq: float, rate: int) -> ChannelCapture:
+        cap = self.captures.get(freq)
+        if cap is None or cap.input_rate != rate:
+            cap = ChannelCapture(
+                self.cfg,
+                freq,
+                utc_now(),
+                input_kind=self.source.kind,
+                input_rate=rate,
+                receiver_id=self.source.receiver_id,
+                squelch_level=self.source.squelch_level,
+            )
+            self.captures[freq] = cap
+        return cap
 
-    def tune(self, freq_khz):
-        """Tune once, then drop the samples produced while the PLL settles."""
-        self.sdr.setFrequency(self.SoapySDR.SOAPY_SDR_RX, 0, freq_khz * 1000)
-        end = time.time() + SETTLE_SECONDS
-        while time.time() < end:
-            self.read_iq()
+    # -- running ----------------------------------------------------------
+    def _save(self, rec):
+        entry = save_recording(rec, self.cfg.record_dir, self.cfg.catalog_file)
+        self.saved.append(entry)
+        print(
+            f"  -> {entry['file']} ({entry['duration_sec']:.1f}s, "
+            f"SNR peak {entry['snr_db_peak']} dB, start {entry['start_utc']}, rx {entry['receiver_id']})"
+        )
 
-    def dwell(self, freq_khz):
-        cap = self.captures[freq_khz]
-        self.tune(freq_khz)
+    def dwell(self, freq: float, seconds: float | None) -> float:
+        """Record ``freq`` for ``seconds`` of stream time (None: until the stream ends).
+
+        A recording in progress always runs to its end. Returns the stream
+        seconds consumed. Sets ``self.eof`` when the source is exhausted.
+        """
+        self.source.tune(freq)
+        cap = self.capture_for(freq, self.source.sample_rate)
         cap.retune(utc_now())
-        start = time.time()
-        while time.time() - start < self.cfg.dwell_seconds or cap.active:
-            iq = self.read_iq()
-            if len(iq) == 0:
+        elapsed = 0.0
+        while seconds is None or elapsed < seconds or cap.active:
+            chunk = self.source.read(READ_TIMEOUT)
+            if chunk is None:
+                self.eof = True
+                break
+            if chunk.gap or chunk.rate != cap.input_rate:
+                for rec in cap.flush():
+                    self._save(rec)
+                cap = self.capture_for(freq, chunk.rate)
+                cap.retune(chunk.t0 or utc_now())
+            if len(chunk.samples) == 0:
                 continue
-            for rec in cap.feed(iq):
+            elapsed += len(chunk.samples) / chunk.rate
+            for rec in cap.feed(chunk.samples, chunk.level_db):
                 self._save(rec)
         for rec in cap.flush():
             self._save(rec)
+        return elapsed
 
-    def _save(self, rec):
-        entry = save_recording(rec, self.cfg.record_dir, self.cfg.catalog_file)
-        print(
-            f"  -> {entry['file']} ({entry['duration_sec']:.1f}s, "
-            f"SNR peak {entry['snr_db_peak']} dB, start {entry['start_utc']})"
-        )
-
-    def scan_once(self):
-        for freq in self.cfg.channels_khz:
-            print(f"[{utc_now().isoformat()}] {freq:.1f} kHz")
-            self.dwell(freq)
-
-    def probe(self, seconds=0.8):
-        """Open the device, measure the voice slot on each channel, release it."""
+    def run(self, max_seconds: float | None = None) -> None:
+        print(f"HFGCS scanner: source {self.source.name}, receiver {self.source.receiver_id}")
+        print(f"Channels {self.channels} kHz")
+        total = 0.0
         try:
-            info = dict(self.sdr.getHardwareInfo())
-        except Exception:
-            info = {}
-        label = info.get("label") or info.get("driver") or "airspyhf"
-        print(f"Device: {label} serial={info.get('serial', '?')}")
-        print(f"Sample rate: {self.sdr.getSampleRate(self.SoapySDR.SOAPY_SDR_RX, 0):.0f} Hz")
-        for freq in self.cfg.channels_khz:
-            cap = self.captures[freq]
-            self.tune(freq)
-            cap.retune(utc_now())
-            powers = []
-            end = time.time() + seconds
-            while time.time() < end:
-                iq = self.read_iq()
-                if len(iq):
-                    _, p = cap.demod.process(iq)
-                    powers.append(power_db(p))
-            level = np.median(powers) if powers else float("nan")
-            print(f"  {freq:8.1f} kHz  voice-slot power {level:6.1f} dBFS")
-
-    def run(self):
-        print("HFGCS scanner started. Ctrl+C to stop.")
-        print(f"Receiver {self.cfg.receiver_id}; channels {self.cfg.channels_khz} kHz")
-        try:
-            while True:
-                self.scan_once()
+            while not self.eof and (max_seconds is None or total < max_seconds):
+                for freq in self.channels:
+                    print(f"[{utc_now().isoformat()}] {freq:.1f} kHz")
+                    if len(self.channels) == 1:
+                        # One channel: stay on it (no retune traffic to shared receivers).
+                        remaining = None if max_seconds is None else max_seconds - total
+                        total += self.dwell(freq, remaining)
+                    else:
+                        total += self.dwell(freq, self.cfg.dwell_seconds)
+                    if self.eof or (max_seconds is not None and total >= max_seconds):
+                        break
         except KeyboardInterrupt:
             print("\nStopping...")
 
+    def probe(self, seconds: float = 0.8) -> dict[float, float]:
+        """Measure the voice slot on each usable channel."""
+        levels = {}
+        for freq in self.channels:
+            self.source.tune(freq)
+            cap = self.capture_for(freq, self.source.sample_rate)
+            cap.retune(utc_now())
+            powers, elapsed = [], 0.0
+            while elapsed < seconds:
+                chunk = self.source.read(READ_TIMEOUT)
+                if chunk is None:
+                    break
+                if not len(chunk.samples):
+                    continue
+                elapsed += len(chunk.samples) / chunk.rate
+                if self.source.squelch_level == "reported" and chunk.level_db is not None:
+                    powers.append(chunk.level_db)
+                else:
+                    _, p = cap.demod.process(chunk.samples)
+                    if not np.isnan(p):
+                        powers.append(power_db(p))
+            levels[freq] = float(np.median(powers)) if powers else float("nan")
+            print(f"  {freq:8.1f} kHz  voice-slot level {levels[freq]:6.1f} dB")
+        return levels
+
     def close(self):
-        for call in (self.sdr.deactivateStream, self.sdr.closeStream):
-            try:
-                call(self.rx_stream)
-            except Exception:
-                pass
+        self.source.close()
+
+
+def apply_cli(cfg: Config, args) -> Config:
+    """Fold command-line overrides into the config."""
+    changes: dict = {}
+    if args.source:
+        changes["source"] = args.source
+    if args.channel:
+        changes["channels"] = tuple(Channel(float(k)) for k in args.channel)
+    if args.receiver_id:
+        changes["receiver_id"] = args.receiver_id
+    owrx = {}
+    if args.url:
+        owrx["url"] = args.url
+    if args.allow_profile_switch:
+        owrx["allow_profile_switch"] = True
+    if owrx:
+        changes["openwebrx"] = dataclasses.replace(cfg.openwebrx, **owrx)
+    kiwi = {}
+    if args.kiwi_host:
+        kiwi["hosts"] = tuple(args.kiwi_host)
+    if args.kiwi_ident:
+        kiwi["ident"] = args.kiwi_ident
+    if kiwi:
+        changes["kiwisdr"] = dataclasses.replace(cfg.kiwisdr, **kiwi)
+    fil = {}
+    if args.file:
+        fil["path"] = args.file
+    if args.file_format:
+        fil["format"] = args.file_format
+    if args.sample_rate:
+        fil["sample_rate"] = args.sample_rate
+    if args.center_khz:
+        fil["center_khz"] = args.center_khz
+    if args.realtime:
+        fil["realtime"] = True
+    if fil:
+        changes["file"] = dataclasses.replace(cfg.file, **fil)
+    return dataclasses.replace(cfg, **changes) if changes else cfg
+
+
+def build_parser():
+    p = argparse.ArgumentParser(description="HFGCS scanner / recorder")
+    p.add_argument("--config", help="TOML file overriding hfgcs.config defaults")
+    p.add_argument(
+        "--source", choices=SOURCE_NAMES, help="receiver backend (default: config 'source', i.e. soapy)"
+    )
+    p.add_argument("--channel", type=float, action="append", help="dial kHz to use (repeatable)")
+    p.add_argument("--receiver-id", help="receiver ID written to the catalog")
+    p.add_argument("--duration", type=float, help="stop after this many seconds of audio")
+    p.add_argument("--probe", action="store_true", help="measure each channel and exit")
+    p.add_argument("--probe-seconds", type=float, default=0.8)
+    g = p.add_argument_group("openwebrx")
+    g.add_argument("--url", help="OpenWebRX base URL")
+    g.add_argument(
+        "--allow-profile-switch",
+        action="store_true",
+        help="allow selecting another SDR profile on the shared OpenWebRX (off by default)",
+    )
+    g = p.add_argument_group("kiwisdr")
+    g.add_argument("--kiwi-host", action="append", help="host:port (repeatable, tried in order)")
+    g.add_argument("--kiwi-ident", help="name shown in the Kiwi user list")
+    g = p.add_argument_group("file")
+    g.add_argument("--file", help="WAV or raw IQ file to replay")
+    g.add_argument("--file-format", choices=["auto", "wav", "iq-wav", "cf32", "cs16", "cu8"])
+    g.add_argument("--sample-rate", type=int, help="raw IQ sample rate")
+    g.add_argument("--center-khz", type=float, help="IQ recording centre frequency")
+    g.add_argument("--realtime", action="store_true", help="pace replay at real time")
+    p.add_argument("-v", "--verbose", action="store_true")
+    return p
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="HFGCS scanner for Airspy HF+ / SoapySDR")
-    parser.add_argument("--config", help="TOML file overriding hfgcs.config defaults")
-    parser.add_argument("--probe", action="store_true", help="Measure each channel and exit")
-    parser.add_argument("--probe-seconds", type=float, default=0.8)
-    args = parser.parse_args(argv)
-    cfg = load_config(args.config)
+    args = build_parser().parse_args(argv)
+    level = logging.INFO if args.verbose else logging.WARNING
+    logging.basicConfig(level=level, format="%(levelname)s %(message)s")
+    scanner = None
     try:
+        cfg = apply_cli(load_config(args.config), args)
         scanner = HFGCSScanner(cfg)
-    except Exception as exc:
-        print(f"Could not open the SDR: {exc}", file=sys.stderr)
-        print("If OpenWebRX is using the radio, stop that client or use hfgcs_waterfall.py.", file=sys.stderr)
-        return 1
+        scanner.start()
+    except (SourceError, ValueError) as exc:
+        print(f"Could not start the {args.source or 'configured'} source: {exc}", file=sys.stderr)
+        if (args.source or "soapy") == "soapy":
+            print("If OpenWebRX is using the radio, use --source openwebrx instead.", file=sys.stderr)
+        if scanner is not None:
+            try:
+                scanner.close()
+            except Exception:
+                pass
+        return 2 if isinstance(exc, TuneRefused) else 1
     try:
         if args.probe:
             scanner.probe(args.probe_seconds)
         else:
-            scanner.run()
+            scanner.run(args.duration)
+    except SourceError as exc:
+        print(f"Source failed: {exc}", file=sys.stderr)
+        return 1
     finally:
         scanner.close()
     return 0

@@ -199,3 +199,83 @@ class Squelch:
         self.state = "closed"
         self.pending_s = 0.0
         self.below_s = 0.0
+
+
+class Resampler:
+    """Streaming rational resampler (polyphase FIR) with state across blocks.
+
+    Output sample ``n`` sits at input time ``n * in_rate / out_rate``; blocks
+    of any size give the same output as one long call.
+    """
+
+    def __init__(self, in_rate: int, out_rate: int, taps_per_phase: int = 32):
+        g = math.gcd(int(in_rate), int(out_rate))
+        self.up = int(out_rate) // g
+        self.down = int(in_rate) // g
+        self.in_rate, self.out_rate = int(in_rate), int(out_rate)
+        if self.up > 512:
+            raise ValueError(f"unsupported resampling ratio {in_rate} -> {out_rate}")
+        self.taps = taps_per_phase
+        if self.up == self.down == 1:
+            self.poly = None
+        else:
+            n = self.up * taps_per_phase
+            cutoff = 0.9 / max(self.up, self.down)  # of the upsampled Nyquist
+            h = signal.firwin(n, cutoff, window=("kaiser", 8.0)) * self.up
+            # poly[p, j] = h[p + j*up], reversed so a dot product with
+            # x[q-T+1 .. q] gives sum_j h[p + j*up] * x[q - j].
+            self.poly = h.reshape(taps_per_phase, self.up).T[:, ::-1].copy()
+        self.reset()
+
+    def reset(self) -> None:
+        self.hist = np.zeros(self.taps - 1, np.float64)
+        self.n_in = 0  # input samples consumed so far
+        self.u = 0  # upsampled index of the next output sample
+
+    def process(self, x: np.ndarray) -> np.ndarray:
+        x = np.asarray(x, dtype=np.float64)
+        if self.poly is None:
+            return x.astype(np.float32)
+        if len(x) == 0:
+            return np.zeros(0, np.float32)
+        buf = np.concatenate([self.hist, x])
+        end_u = (self.n_in + len(x)) * self.up  # first upsampled index not yet available
+        us = np.arange(self.u, end_u, self.down, dtype=np.int64)
+        out = np.zeros(0, np.float32)
+        if len(us):
+            q = us // self.up
+            p = us % self.up
+            idx = q - (self.n_in - len(self.hist))  # index of x[q] inside buf
+            win = np.lib.stride_tricks.sliding_window_view(buf, self.taps)
+            out = np.einsum("ij,ij->i", win[idx - self.taps + 1], self.poly[p]).astype(np.float32)
+            self.u = int(us[-1]) + self.down
+        self.n_in += len(x)
+        self.hist = buf[-(self.taps - 1) :]
+        return out
+
+
+class AudioFrontEnd:
+    """Front end for sources that already deliver demodulated USB audio.
+
+    Resamples to the pipeline audio rate and band-limits to the voice slot
+    (stateful filters), returning the same ``(audio, slot_power)`` pair as
+    :meth:`UsbDemodulator.process` so :class:`ChannelCapture` can use either.
+    """
+
+    def __init__(self, in_rate: int, audio_rate: int, low_hz: float = 300.0, high_hz: float = 3000.0):
+        self.resampler = Resampler(in_rate, audio_rate)
+        low = max(low_hz, 100.0)
+        high = min(high_hz, 0.45 * audio_rate)
+        self.sos = signal.butter(4, [low, high], btype="bandpass", fs=audio_rate, output="sos")
+        self.reset()
+
+    def reset(self) -> None:
+        self.resampler.reset()
+        self.zi = np.zeros((self.sos.shape[0], 2))
+
+    def process(self, audio: np.ndarray) -> tuple[np.ndarray, float]:
+        y = self.resampler.process(np.asarray(audio, dtype=np.float64).real)
+        if len(y) == 0:
+            return np.zeros(0, np.float32), float("nan")
+        y, self.zi = signal.sosfilt(self.sos, y, zi=self.zi)
+        return y.astype(np.float32), float(np.mean(y.astype(np.float64) ** 2))
