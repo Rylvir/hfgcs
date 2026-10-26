@@ -49,7 +49,9 @@ from .base import BaseSource, Chunk, SourceError
 
 log = logging.getLogger(__name__)
 
-PLACEHOLDER_IDENTS = {"", "hfgcs", "hfgcs-monitor", "changeme", "your-callsign", "anonymous", "user"}
+# Generic values that identify nobody. A project-style name such as "HFGCS-Monitor"
+# is accepted as-is; no callsign suffix is required.
+PLACEHOLDER_IDENTS = {"", "hfgcs", "changeme", "your-callsign", "anonymous", "user"}
 
 # kiwirecorder / kiwiclient messages that mean "the sysop said no".
 REFUSAL_PATTERNS = [
