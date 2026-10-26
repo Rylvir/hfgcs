@@ -3,7 +3,7 @@ numpy>=1.24
 scipy>=1.10
 soundfile>=0.12
 websockets>=12
-tomli>=2; python_version < '3.11'
+tomli>=2.5.0; python_version < '3.11'
 # SoapySDR Python bindings match the system library. On Debian/Ubuntu:
 #   sudo apt install python3-soapysdr
 # The project venv can import that module, or a copy extracted from the deb.
