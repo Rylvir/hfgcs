@@ -256,7 +256,7 @@ def build_parser():
     )
     g.add_argument(
         "--unlock-key-env",
-        default="HFGCS_OWRX_UNLOCK_KEY",
+        default="OPENWEBRX_MAGIC_KEY",
         metavar="VAR",
         help="environment variable holding the OpenWebRX+ unlock (magic) key for --select-profile "
         "(default: %(default)s). The key is never printed or logged",

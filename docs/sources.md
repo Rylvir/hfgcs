@@ -108,12 +108,12 @@ For a deliberate, owner-approved switch of the shared radio:
 # the key is read from the environment and never printed or logged
 set -a; . ~/.config/hfgcs/hfgcs.env; set +a
 python hfgcs_scanner.py --source openwebrx --url http://localhost:8073 \
-    --select-profile "HFGCS 8992 kHz" [--unlock-key-env HFGCS_OWRX_UNLOCK_KEY]
+    --select-profile "HFGCS 8992 kHz" [--unlock-key-env OPENWEBRX_MAGIC_KEY]
 ```
 
 `NAME` is a profile id (`sdr|profile`), its full name, or a name suffix such as
 `HFGCS 8992 kHz` (it must match exactly one profile). The command sends **one**
-`selectprofile` (with the OpenWebRX+ unlock key as `params.key`), waits for the
+`selectprofile` (with the OpenWebRX+ unlock "magic key" as `params.key`), waits for the
 server's new `config`, prints the profile before and after, and exits (0 = done
 or already active, 1 = key variable not set, 3 = refused or not confirmed; a
 locked-profile refusal is reported, not retried). Nothing else changes:

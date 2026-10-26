@@ -204,7 +204,7 @@ def test_select_profile_once_with_key(monkeypatch, capsys, caplog):
     import hfgcs_scanner
 
     caplog.set_level(logging.DEBUG)
-    monkeypatch.setenv("HFGCS_OWRX_UNLOCK_KEY", KEY)
+    monkeypatch.setenv("OPENWEBRX_MAGIC_KEY", KEY)
     with MockOpenWebRX(profile=P15016, magic_key=KEY, locked={P8992, P15016}) as srv:
         rc = hfgcs_scanner.main(
             ["--source", "openwebrx", "--url", srv.url, "--select-profile", "HFGCS 8992 kHz", "-v"]
@@ -236,18 +236,18 @@ def test_select_profile_custom_env_name_and_already_active(monkeypatch, capsys):
 def test_select_profile_refuses_without_key(monkeypatch, capsys):
     import hfgcs_scanner
 
-    monkeypatch.delenv("HFGCS_OWRX_UNLOCK_KEY", raising=False)
+    monkeypatch.delenv("OPENWEBRX_MAGIC_KEY", raising=False)
     with MockOpenWebRX(profile=P15016) as srv:
         rc = hfgcs_scanner.main(["--source", "openwebrx", "--url", srv.url, "--select-profile", P8992])
         assert rc == 1
         assert srv.connections == 0
-    assert "HFGCS_OWRX_UNLOCK_KEY is not set" in capsys.readouterr().err
+    assert "OPENWEBRX_MAGIC_KEY is not set" in capsys.readouterr().err
 
 
 def test_select_profile_wrong_key_is_reported_and_not_retried(monkeypatch, capsys):
     import hfgcs_scanner
 
-    monkeypatch.setenv("HFGCS_OWRX_UNLOCK_KEY", "wrong")
+    monkeypatch.setenv("OPENWEBRX_MAGIC_KEY", "wrong")
     with MockOpenWebRX(profile=P15016, magic_key=KEY, locked={P8992}) as srv:
         rc = hfgcs_scanner.main(["--source", "openwebrx", "--url", srv.url, "--select-profile", P8992])
         assert rc == 3
