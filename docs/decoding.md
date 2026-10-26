@@ -233,9 +233,30 @@ fused preamble in the prompt was not run: it needs a per-clip re-decode (about 2
 it would at most restore one dropped onset character. A prefix prior (the eval's preambles start with QH, VQ, 56,
 WE, AC or 4S) is the cheaper next step.
 
+**Mid-message start detection (`eam_parser.mid_message_start_kind`).** A headless EAM (`partial_start`) whose
+transcript has **neither a preamble hearing nor "message follows"** (an inferred one counts as present), yet does have
+a body, gets the flag `mid_message_start` and a field `mid_message_start` with one of three values:
+- `read2_only`: fewer than 3 characters before "I say again".
+- `in_read1`: a read-1 tail, then "I say again", or a self-split of concatenated reads.
+- `body_only`: no "I say again", so the clip started inside read 1 or read 2 and which one is unknown.
+
+On a mid-message start, preamble fusion ignores the read starts. A missing word can also be an ASR drop, so this is a
+flag, not proof. As a reference we use missileer's anchors: no `standby` and no `message_follows` anchor means a
+mid-message start.
+
+| subset (EAMs scored) | `partial_start` | `mid_message_start` | per kind | agrees with missileer anchors |
+|---|---|---|---|---|
+| gold (8) | 4 | 1 (eam-8c26a8bf) | in_read1 1 | 1/1 true positive, 0 false positives, 0 missed |
+| silver (30) | 7 | 1 (eam-a3b2b5e0) | in_read1 1 | 1/1 true positive, 0 false positives, 0 missed |
+
+The silver scoring subset requires both reads, so it under-represents mid-message clips. missileer's own `partial`
+flag is set on 7 of those 30 and on none of the 8 gold EAMs, so it means something else (an incomplete copy), not a
+late start. Body CER and exact-match are unchanged, because detection does not alter the body.
+
 **Remaining failure modes:**
 - Mangled phonetic words that are too far for safe snapping: "Dory", "Big Door", "Koopalink", "Whitty", "Aloha".
-- Clips that start mid-message (no header or preamble), so only one partial read is available.
+- Clips that start mid-message (no header or preamble), so only one partial read is available. They are now flagged
+  (`mid_message_start`) but not recovered; simulcast or rebroadcast copies are the fix.
 - Hallucination loops after the sign-off or in long carrier gaps. They are removed as loops but sometimes leave junk
   characters at a body edge.
 - Low preamble exact match on gold (0.25). One wrong character in 6 fails the match.
@@ -301,7 +322,7 @@ skyking     := (SKYKING{1,2} [DO NOT ANSWER] codeword{1,2} TIME digit digit AUTH
                [I SAY AGAIN <same>] THIS IS callsign OUT
 char        := NATO word | digit word | numeral | single letter
 ```
-Segmentation: a new broadcast starts at "all stations" or "skyking" only after the previous one has closed ("out" or "more to follow"), so the Skyking repeat after "I say again" is not split off. Every deviation is a **flag**, not an exception. These include a missing header (`partial_start`), `single_read`, `missing_preamble`, `preamble_reads_disagree`, `reads_disagree`, `length_mismatch`, `declared_length_conflict`, `preamble_body_mismatch`, `non_character_words_in_body`, `closing_callsign_mismatch`, `invalid_time`, and others.
+Segmentation: a new broadcast starts at "all stations" or "skyking" only after the previous one has closed ("out" or "more to follow"), so the Skyking repeat after "I say again" is not split off. Every deviation is a **flag**, not an exception. These include a missing header (`partial_start`), a clip that began inside the message itself (`mid_message_start`, see below), `single_read`, `missing_preamble`, `preamble_reads_disagree`, `reads_disagree`, `length_mismatch`, `declared_length_conflict`, `preamble_body_mismatch`, `non_character_words_in_body`, `closing_callsign_mismatch`, `invalid_time`, and others.
 
 ### Per-character confidence
 Read 1 and read 2 are aligned with Levenshtein (`align.py`). Each column then gets:

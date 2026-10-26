@@ -387,3 +387,54 @@ def test_unstructured_long_char_run_is_parsed_headless():
 def test_short_char_run_stays_unknown():
     r = parse_transcript("radio check Alpha Bravo one two over")
     assert r[0]["type"] == "unknown"
+
+
+# ---- mid-message start detection
+_R1 = "Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India Juliet"
+_HDR = "All stations, this is Mainsail. Alpha Bravo Charlie Delta Echo Foxtrot stand by. Message follows. "
+
+
+def _eam(text):
+    from decoding.eam_parser import parse_transcript
+
+    recs = [r for r in parse_transcript(text) if r["type"] == "eam"]
+    assert recs
+    return recs[0]
+
+
+def test_mid_start_read2_only():
+    rec = _eam(f"again. {_R1}. This is Mainsail, out.")
+    assert rec["mid_message_start"] == "read2_only" and "mid_message_start" in rec["flags"]
+
+
+def test_mid_start_tail_of_read1_then_read2():
+    rec = _eam(f"Hotel India Juliet. I say again. {_R1}. This is Mainsail, out.")
+    assert rec["mid_message_start"] == "in_read1"
+    assert rec["read1"] == "HIJ" and rec["read2"] == "ABCDEFGHIJ"
+
+
+def test_mid_start_body_only():
+    rec = _eam("Golf Hotel India Juliet Kilo Lima Mike November Oscar Papa Quebec Romeo Sierra Tango. Out.")
+    assert rec["mid_message_start"] == "body_only"
+
+
+def test_headless_but_preamble_heard_is_not_mid_message():
+    rec = _eam(
+        f"Alpha Bravo Charlie Delta Echo Foxtrot stand by. Message follows. {_R1}. I say again. {_R1}."
+    )
+    assert "partial_start" in rec["flags"]
+    assert "mid_message_start" not in rec and "mid_message_start" not in rec["flags"]
+
+
+def test_full_message_is_not_mid_message():
+    rec = _eam(f"{_HDR}{_R1}. I say again. {_R1}. This is Mainsail, out.")
+    assert "mid_message_start" not in rec["flags"] and "partial_start" not in rec["flags"]
+
+
+def test_mid_start_kind_helper_edge_cases():
+    from decoding.eam_parser import mid_message_start_kind
+
+    assert mid_message_start_kind({"type": "skyking", "body": "X"}) is None
+    assert mid_message_start_kind({"type": "eam", "body": "", "flags": []}) is None
+    split = {"type": "eam", "body": "ABCDEF", "flags": ["missing_message_follows", "reads_split_inferred"]}
+    assert mid_message_start_kind(split) == "in_read1"

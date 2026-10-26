@@ -532,6 +532,32 @@ def _longest_char_run(toks: Sequence[Token]) -> int:
     return best
 
 
+MID_START_MIN_READ1 = 3  # fewer read-1 characters before "I say again" = read 2 only
+
+
+def mid_message_start_kind(rec: dict) -> Optional[str]:
+    """For a headless EAM (``partial_start``), say whether the clip began
+    partway through the message itself rather than in the header/preamble:
+    neither a preamble hearing nor "message follows" survived, yet a body did.
+
+    Returns ``"read2_only"`` (the clip starts at or just before "I say again"),
+    ``"in_read1"`` (a tail of read 1, then read 2), ``"body_only"`` (characters
+    but no "I say again": inside read 1 or read 2, which one is unknown), or
+    None. Missing words can also be ASR drops, so this is a flag, not proof."""
+    flags = rec.get("flags", ())
+    if rec.get("type") != "eam" or not rec.get("body"):
+        return None
+    has_follows = "missing_message_follows" not in flags
+    has_preamble = bool(rec.get("preamble_reads"))
+    if has_follows or has_preamble:
+        return None
+    if "single_read" in flags:
+        return "body_only"
+    if "reads_split_inferred" in flags:
+        return "in_read1"
+    return "read2_only" if len(rec.get("read1") or "") < MID_START_MIN_READ1 else "in_read1"
+
+
 def parse_transcript(transcript: TokenInput) -> list[dict]:
     """Split a recording's transcript into broadcasts and parse each one.
     Always returns a list; unrecognised audio yields one ``unknown`` record."""
@@ -574,6 +600,10 @@ def parse_transcript(transcript: TokenInput) -> list[dict]:
             rec = parse_eam(seg)
             if s == 0 and n[:2] != ["all", "stations"]:
                 rec["flags"].append("partial_start")
+                kind = mid_message_start_kind(rec)
+                if kind:
+                    rec["flags"].append("mid_message_start")
+                    rec["mid_message_start"] = kind
         rec["segment"] = {"token_start": s, "token_end": e, **_time_span(seg)}
         out.append(rec)
     return out
