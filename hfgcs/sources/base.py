@@ -15,6 +15,7 @@ a websocket, a KiwiSDR slot), ``close()`` must always release it.
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime
@@ -85,6 +86,9 @@ class BaseSource:
     squelch_level: Literal["slot", "reported"] = "slot"
     #: True if the source can only ever deliver one channel (e.g. one Kiwi slot).
     single_channel = False
+    #: Optional :class:`hfgcs.runstate.ConnectionEvents` the scanner attaches; connection
+    #: events are logged either way and also appended there when it is set.
+    events = None
 
     def __init__(self, receiver_id: str = ""):
         self._receiver_id = receiver_id
@@ -120,6 +124,25 @@ class BaseSource:
 
     def read(self, timeout: float | None = None) -> Chunk | None:  # pragma: no cover
         raise NotImplementedError
+
+    def connection_event(self, event: str, message: str, level: int = logging.INFO, **fields) -> dict:
+        """Log one connection event with its UTC time and append it to ``self.events``.
+
+        ``event`` is one of connect, connect_failed, disconnect, reconnect_attempt,
+        audio_resumed. The log line reads e.g.
+        ``openwebrx DISCONNECT at 2026-10-26T23:10:04.120Z: ... (close code 1006)``.
+        """
+        from ..runstate import utc_iso
+
+        fields = {"source": self.name, "receiver": self.receiver_id, **fields}
+        if self.events is not None:
+            rec = self.events.emit(event, **fields)
+        else:
+            rec = {"utc": utc_iso(), "event": event, **{k: v for k, v in fields.items() if v is not None}}
+        logging.getLogger(f"hfgcs.sources.{self.name}").log(
+            level, "%s %s at %s: %s", self.name, event.upper(), rec["utc"], message
+        )
+        return rec
 
     def __enter__(self):
         self.open()

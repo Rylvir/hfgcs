@@ -224,6 +224,8 @@ journalctl --user -u hfgcs-review -f
   `hfgcs/capture.py` (`start_utc`/`file_start_utc`/`end_utc`, `receiver_id`, `sha256`,
   `snr_db_mean`/`snr_db_peak`, `noise_floor_db`, `preroll_sec`, `file`), as well as the legacy scanner
   format (see `docs/database.md` §1). Re-running it is idempotent, so a timer or cron job can call it.
+- Updating the code later: run `deploy/deploy.sh` (docs/deploy.md). It restarts only the units whose code
+  changed, applies migrations after a DB backup, and never restarts a recorder mid-capture.
 - The units restart on failure every 10 s. If the user manager starts before `192.168.2.214` is assigned,
   the first bind fails and the next retry succeeds.
 - Existing DBs: `scripts/hfgcs_db.py --db data/hfgcs.db migrate`. Migration 0003 adds `captures.snr_peak_db`
