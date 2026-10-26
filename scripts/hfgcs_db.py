@@ -751,24 +751,38 @@ def cmd_query(args) -> int:
 
 
 # ------------------------------------------------------------- load-decodes
+# Decoding output contract v1 (agreed with Decoding; branch decoding-output). One document per
+# recording, as <wav>.decode.json beside the WAV and as one line of decodes.jsonl:
+#   {schema_version, decoder_version, recording {path, sha256, <catalog fields>}, duration_s,
+#    decoded_at, asr {segments, words, first_pass, second_pass}, broadcasts [
+#      {broadcast_id, type, start_s, end_s, asr_word_span [i, j], transcript, callsign,
+#       callsigns_all [{callsign, role}], confidence (0-1), confidence_detail {...}, ...}]}
 DECODE_TYPES = {"eam": ("EAM", "broadcast"), "skyking": ("SKYKING", "broadcast"),
-                "test_count": ("OTHER", "test"), "unknown": ("OTHER", "unknown")}
+                "radio_check": ("RADIOCHECK", "broadcast"), "other": ("OTHER", "unknown")}
+MATCH_WINDOW_S = 2.0
 PARTIAL_FLAGS = {"partial_start", "mid_message_start", "truncated"}
 REVIEW_FLAGS = {"reads_disagree", "preamble_reads_disagree", "length_mismatch", "declared_length_conflict",
                 "preamble_body_mismatch", "single_read", "missing_preamble", "invalid_time",
                 "closing_callsign_mismatch", "non_character_words_in_body"}
 # Machine-owned columns a re-decode may overwrite on rows nobody has touched.
-MACHINE_FIELDS = ("msg_type", "broadcast_type", "heard_utc", "heard_at_basis", "offset_sec", "callsign",
-                  "prefix", "message_text", "length", "announced_length", "preamble", "addressee",
-                  "partial", "skyking_codeword", "skyking_time", "skyking_auth", "confidence",
-                  "char_confidence", "transcript", "asr_model", "review_status", "decoder_version",
-                  "decoded_utc")
+MACHINE_FIELDS = ("msg_type", "broadcast_type", "heard_utc", "heard_at_basis", "offset_sec", "start_s",
+                  "end_s", "broadcast_id", "callsign", "callsigns_all", "prefix", "message_text", "length",
+                  "announced_length", "preamble", "addressee", "partial", "skyking_codeword", "skyking_time",
+                  "skyking_auth", "confidence", "confidence_detail", "char_confidence", "transcript",
+                  "asr_model", "review_status", "decoder_version", "decoded_utc")
+
+
+class DecodeFormatError(ValueError):
+    pass
+
+
+def broadcast_id(sha256: str, start_s: float) -> str:
+    return f"{sha256[:12]}@{round(float(start_s), 1):.1f}"
 
 
 def iter_decode_docs(paths):
-    """Yield (source_label, doc) for each recording's decode. Accepts sidecar files
-    (``<wav>.decode.json``), JSONL files (``decodes.jsonl``, one doc per line) and
-    directories (searched recursively for ``*.decode.json``)."""
+    """Yield (label, doc, path): sidecars (``*.decode.json``), JSONL files (one document per
+    line, e.g. ``decodes.jsonl``) and directories (searched recursively for sidecars)."""
     for raw in paths:
         p = Path(raw)
         files = sorted(p.rglob("*.decode.json")) if p.is_dir() else [p]
@@ -782,31 +796,37 @@ def iter_decode_docs(paths):
                 yield f.name, json.loads(f.read_text(encoding="utf-8")), f
 
 
-def _decoder_version(doc: dict, records: list, override: str | None) -> str:
-    if override:
-        return override
-    asr = doc.get("asr") or {}
-    if asr.get("decoder_version"):
-        return str(asr["decoder_version"])
-    schema = next((r.get("schema_version") for r in records if r.get("schema_version")), "?")
-    parts = [f"parser:{schema}", f"asr:{asr.get('model', '?')}"]
-    for k in ("compute_type", "config_key", "prompt_hash"):
-        if asr.get(k):
-            parts.append(f"{k}:{asr[k]}")
-    return "|".join(parts)
+def check_decode_doc(doc: dict) -> None:
+    """Raise DecodeFormatError unless ``doc`` follows contract v1 (the #6-era
+    ``{records, ...}`` / sidecar-without-decoder_version shapes are not accepted)."""
+    if not isinstance(doc, dict):
+        raise DecodeFormatError("document is not a JSON object")
+    missing = [k for k in ("schema_version", "decoder_version", "recording", "broadcasts") if k not in doc]
+    if missing:
+        raise DecodeFormatError(f"missing top-level {missing} (decode output contract v1 required)")
+    if not isinstance(doc["broadcasts"], list):
+        raise DecodeFormatError("broadcasts is not a list")
+    for n, b in enumerate(doc["broadcasts"]):
+        if not isinstance(b, dict) or not isinstance(b.get("start_s"), (int, float)) or "type" not in b:
+            raise DecodeFormatError(f"broadcast {n} lacks type/start_s")
+        c = b.get("confidence")
+        if c is not None and (isinstance(c, bool) or not isinstance(c, (int, float)) or not 0 <= c <= 1):
+            raise DecodeFormatError(f"broadcast {n}: confidence must be a 0-1 number")
 
 
 def _find_capture(con, rec_entry: dict, source_path: Path):
-    """Capture for a decode: by sha256, else stored file path, else file name (also the
-    sidecar's own name minus ``.decode.json``)."""
+    """Capture for a decode: by recording sha256, else stored path, else unique file name
+    (recording.path / recording.file, or the sidecar's name minus ``.decode.json``)."""
     sha = rec_entry.get("sha256")
     if sha:
         row = con.execute("SELECT * FROM captures WHERE audio_sha256 = ?", (sha,)).fetchone()
         if row:
             return row
     names = []
-    if rec_entry.get("file"):
-        f = rec_entry["file"]
+    for key in ("path", "file"):
+        f = rec_entry.get(key)
+        if not f:
+            continue
         row = con.execute("SELECT * FROM captures WHERE audio_path = ? AND external_source IS NULL",
                           (f,)).fetchone()
         if row:
@@ -814,52 +834,62 @@ def _find_capture(con, rec_entry: dict, source_path: Path):
         names.append(Path(f).name)
     if source_path.name.endswith(".decode.json"):
         names.append(source_path.name[: -len(".decode.json")])
-    for name in names:
+    for name in dict.fromkeys(names):
+        like = "%/" + name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         rows = con.execute("""SELECT * FROM captures WHERE external_source IS NULL
                               AND (audio_path = ? OR audio_path LIKE ? ESCAPE '\\')""",
-                           (name, "%/" + name.replace("\\", "\\\\").replace("%", "\\%")
-                            .replace("_", "\\_"))).fetchall()
+                           (name, like)).fetchall()
         if len(rows) == 1:
             return rows[0]
     return None
 
 
-def _decode_to_fields(r: dict, cap, asr: dict, n_records: int, version: str, now: str) -> dict:
-    msg_type, btype = DECODE_TYPES.get(r.get("type"), ("OTHER", "unknown"))
-    flags = set(r.get("flags") or [])
-    seg = r.get("segment") or {}
-    start = seg.get("start_sec")
+def _decode_to_fields(b: dict, cap, doc: dict, version: str, decoded_utc: str) -> dict:
+    msg_type, btype = DECODE_TYPES.get(b.get("type"), ("OTHER", "unknown"))
+    flags = set(b.get("flags") or [])
+    start, end = float(b["start_s"]), b.get("end_s")
     t0 = dt.datetime.fromisoformat(cap["start_utc"].replace("Z", "+00:00"))
-    heard = to_z(t0 + dt.timedelta(seconds=float(start))) if start is not None else cap["start_utc"]
-    conf = r.get("confidence")
-    chars = r.get("chars") or []
-    body = r.get("body") if msg_type == "EAM" else None
-    if msg_type == "SKYKING":
-        vals = [r.get(k) or {} for k in ("codeword", "time", "authentication")]
-        cs = [v.get("confidence") for v in vals if isinstance(v.get("confidence"), (int, float))]
-        mean = sum(cs) / len(cs) if cs else None
-    else:
-        mean = conf.get("mean") if isinstance(conf, dict) else conf
-    declared = r.get("declared_length")
-    text = r.get("text") or (asr.get("text") if n_records == 1 else None)
+    chars = b.get("chars") or []
+    body = b.get("body") if msg_type == "EAM" else None
+    conf = b.get("confidence")
+    declared = b.get("declared_length")
+    sha = cap["audio_sha256"] or (doc.get("recording") or {}).get("sha256") or f"capture{cap['id']:011d}"
+    detail, cs_all = b.get("confidence_detail"), b.get("callsigns_all")
+    asr = doc.get("asr") or {}
+
+    def val(k):
+        v = b.get(k)
+        return v.get("value") if isinstance(v, dict) else v
+
     return {
-        "msg_type": msg_type, "broadcast_type": btype, "heard_utc": heard,
-        "heard_at_basis": "voice_onset" if start is not None else "clip_start",
-        "offset_sec": start, "callsign": r.get("callsign"),
+        "msg_type": msg_type, "broadcast_type": btype if b.get("type") != "radio_check" else "directed",
+        "heard_utc": to_z(t0 + dt.timedelta(seconds=start)), "heard_at_basis": "voice_onset",
+        "offset_sec": start, "start_s": start, "end_s": None if end is None else float(end),
+        "broadcast_id": b.get("broadcast_id") or broadcast_id(sha, start),
+        "callsign": b.get("callsign"), "callsigns_all": None if cs_all is None else json.dumps(cs_all),
         "prefix": body[:2] if body else None, "message_text": body or None,
-        "length": declared, "announced_length": declared if r.get("length_source") == "announced" else None,
-        "preamble": r.get("preamble"), "addressee": r.get("addressee"),
+        "length": declared, "announced_length": declared if b.get("length_source") == "announced" else None,
+        "preamble": b.get("preamble"), "addressee": b.get("addressee"),
         "partial": 1 if flags & PARTIAL_FLAGS else 0,
-        "skyking_codeword": (r.get("codeword") or {}).get("value"),
-        "skyking_time": (r.get("time") or {}).get("value"),
-        "skyking_auth": (r.get("authentication") or {}).get("value"),
-        "confidence": None if mean is None else max(0.0, min(1.0, float(mean))),
+        "skyking_codeword": val("codeword"), "skyking_time": val("time"),
+        "skyking_auth": val("authentication"),
+        "confidence": None if conf is None else float(conf),
+        "confidence_detail": None if detail is None else json.dumps(detail, sort_keys=True),
         "char_confidence": json.dumps([c.get("confidence") for c in chars]) if chars else None,
-        "transcript": text, "asr_model": asr.get("model"),
-        "review_status": "needs_review" if (flags & REVIEW_FLAGS or (mean is not None and mean < 0.8))
+        "transcript": b.get("transcript"),
+        "asr_model": asr.get("model") or _version_part(version, "asr"),
+        "review_status": "needs_review" if (flags & REVIEW_FLAGS or (conf is not None and conf < 0.8))
         else "auto",
-        "decoder_version": version, "decoded_utc": now,
+        "decoder_version": version, "decoded_utc": decoded_utc,
     }
+
+
+def _version_part(version: str, key: str):
+    for part in version.split(";"):
+        k, _, v = part.partition("=")
+        if k == key:
+            return v
+    return None
 
 
 def _human_touched(con, mid: int) -> bool:
@@ -873,20 +903,36 @@ def _human_touched(con, mid: int) -> bool:
                 or row["review_status"] in ("reviewed", "rejected"))
 
 
+def _match_message(con, capture_id: int, start: float, bid: str, taken: set):
+    """Existing decoded message of this recording within MATCH_WINDOW_S of start_s (closest
+    first; an identical broadcast_id wins ties). Messages already matched in this document
+    are skipped, so two broadcasts never map onto one row."""
+    rows = con.execute(
+        """SELECT id, broadcast_id, coalesce(start_s, offset_sec) AS t FROM messages
+           WHERE capture_id = ? AND coalesce(start_s, offset_sec) BETWEEN ? AND ?""",
+        (capture_id, start - MATCH_WINDOW_S, start + MATCH_WINDOW_S)).fetchall()
+    rows = [r for r in rows if r["id"] not in taken]
+    rows.sort(key=lambda r: (abs(r["t"] - start), r["broadcast_id"] != bid))
+    return rows[0]["id"] if rows else None
+
+
 def cmd_load_decodes(args) -> int:
-    """Load Decoding's per-recording outputs into `messages` (see docs/database.md section 12)."""
+    """Load Decoding's output (contract v1) into `messages` (see docs/database.md section 12)."""
     con = connect(args.db)
     require_schema(con, 3)
     now = to_z(dt.datetime.now(dt.timezone.utc))
     stats = Counter()
-    unmatched = []
+    unmatched, invalid = [], []
     base = Path(args.recordings_root) if args.recordings_root else None
     for label, doc, path in iter_decode_docs(args.paths):
-        records = doc.get("broadcasts")
-        if records is None:
-            records = doc.get("records") or []      # bare Decoder.decode() output
-        rec_entry = doc.get("recording") or {}
-        asr = doc.get("asr") or {}
+        try:
+            check_decode_doc(doc)
+        except DecodeFormatError as e:
+            invalid.append(f"{label}: {e}")
+            continue
+        rec_entry = dict(doc["recording"] or {})
+        if "file" not in rec_entry and rec_entry.get("path"):
+            rec_entry["file"] = rec_entry["path"]
         cap = _find_capture(con, rec_entry, path)
         if cap is None and args.create_captures and "end_utc" in rec_entry and "frequency_khz" in rec_entry:
             rid = ensure_receiver(con, rec_entry.get("receiver_id") or args.receiver, kind="local_sdr")
@@ -898,33 +944,33 @@ def cmd_load_decodes(args) -> int:
             unmatched.append(label)
             continue
         stats["recordings"] += 1
-        version = _decoder_version(doc, records, args.decoder_version)
-        key_base = cap["audio_sha256"] or f"capture{cap['id']}"
-        kept = [r for r in records if args.keep_unknown or r.get("type") != "unknown"]
-        stats["skipped_unknown"] += len(records) - len(kept)
-        for idx, r in enumerate(kept):
-            fields = _decode_to_fields(r, cap, asr, len(kept), version, now)
-            canon = json.dumps(r, sort_keys=True, separators=(",", ":"))
+        version = args.decoder_version or str(doc["decoder_version"])
+        decoded_at = doc.get("decoded_at") or now
+        taken: set[int] = set()
+        for b in doc["broadcasts"]:
+            fields = _decode_to_fields(b, cap, doc, version, decoded_at)
+            canon = json.dumps(b, sort_keys=True, separators=(",", ":"))
             rsha = hashlib.sha256(canon.encode()).hexdigest()
-            import_key = f"decode:{key_base}:{idx}"
-            row = con.execute("SELECT id FROM messages WHERE import_key = ?", (import_key,)).fetchone()
-            if row is None:
+            mid = _match_message(con, cap["id"], fields["start_s"], fields["broadcast_id"], taken)
+            if mid is None:
                 cols = ["capture_id", "origin", "import_key", *MACHINE_FIELDS]
-                vals = [cap["id"], "pipeline", import_key, *(fields[c] for c in MACHINE_FIELDS)]
+                vals = [cap["id"], "pipeline", f"decode:{fields['broadcast_id']}",
+                        *(fields[c] for c in MACHINE_FIELDS)]
                 marks = ",".join("?" * len(cols))
-                mid = con.execute(f"INSERT INTO messages({', '.join(cols)}) VALUES ({marks})", vals).lastrowid
+                mid = con.execute(f"INSERT INTO messages({', '.join(cols)}) VALUES ({marks})",
+                                  vals).lastrowid
                 applied = 1
                 stats["inserted"] += 1
             else:
-                mid = row["id"]
                 if con.execute("SELECT 1 FROM message_decodes WHERE message_id = ? AND decoder_version = ? "
                                "AND record_sha256 = ?", (mid, version, rsha)).fetchone():
+                    taken.add(mid)
                     stats["unchanged"] += 1
                     continue
                 if _human_touched(con, mid):
                     # Keep the person's version; record the new machine copy beside it.
                     con.execute("""UPDATE messages SET machine_text = ?, decoder_version = ?, decoded_utc = ?
-                                   WHERE id = ?""", (fields["message_text"], version, now, mid))
+                                   WHERE id = ?""", (fields["message_text"], version, decoded_at, mid))
                     applied = 0
                     stats["kept_human"] += 1
                 else:
@@ -933,22 +979,28 @@ def cmd_load_decodes(args) -> int:
                                 [*(fields[c] for c in MACHINE_FIELDS), mid])
                     applied = 1
                     stats["updated"] += 1
-            con.execute("""INSERT INTO message_decodes(message_id, decoder_version, record_sha256,
-                               machine_text, transcript, confidence, applied, source_file, record_json)
-                           VALUES (?,?,?,?,?,?,?,?,?)""",
-                        (mid, version, rsha, fields["message_text"], fields["transcript"],
-                         fields["confidence"], applied, label, canon))
+            taken.add(mid)
+            con.execute("""INSERT INTO message_decodes(message_id, decoder_version, broadcast_id, decoded_at,
+                               record_sha256, machine_text, transcript, confidence, applied, source_file,
+                               record_json)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                        (mid, version, fields["broadcast_id"], decoded_at, rsha, fields["message_text"],
+                         fields["transcript"], fields["confidence"], applied, label, canon))
     con.commit()
     print("loaded decodes: " + ", ".join(f"{k} {v}" for k, v in sorted(stats.items())) if stats
           else "loaded decodes: nothing to do")
+    if invalid:
+        print(f"skipped {len(invalid)} document(s) not in decode contract v1: " + "; ".join(invalid[:5])
+              + (" ..." if len(invalid) > 5 else ""))
     if unmatched:
         print(f"no capture found for {len(unmatched)} decode(s) (run ingest-catalog first): "
               + ", ".join(unmatched[:10]) + (" ..." if len(unmatched) > 10 else ""))
+    rc = 1 if args.strict and (unmatched or invalid) else 0
     if args.link and (stats["inserted"] or stats["updated"]):
         con.close()
-        return cmd_link(argparse.Namespace(db=args.db, simulcast_sec=None, window_hours=None, threshold=None,
-                                           min_known=None, similarity=None, max_len_diff=None))
-    return 0 if not (unmatched and args.strict) else 1
+        rc = cmd_link(argparse.Namespace(db=args.db, simulcast_sec=None, window_hours=None, threshold=None,
+                                         min_known=None, similarity=None, max_len_diff=None)) or rc
+    return rc
 
 
 # ------------------------------------------------------------------------ main
@@ -978,17 +1030,18 @@ def main(argv=None) -> int:
     s.add_argument("--kind", default="local_sdr")
     s.add_argument("--recordings-root", help="directory the catalog's 'file' paths are relative to")
     s.set_defaults(fn=cmd_ingest_catalog)
-    s = sub.add_parser("load-decodes", help="load Decoding's <wav>.decode.json / decodes.jsonl into messages")
+    s = sub.add_parser("load-decodes",
+                       help="load Decoding's <wav>.decode.json / decodes.jsonl (contract v1) into messages")
     s.add_argument("paths", nargs="+", help="sidecar files, decodes.jsonl files or directories")
-    s.add_argument("--decoder-version", help="override the version string derived from the decode")
+    s.add_argument("--decoder-version", help="override the document's decoder_version")
     s.add_argument("--recordings-root", help="for --create-captures: base of the recording 'file' paths")
     s.add_argument("--receiver", default="local-hfplus", help="receiver code when the entry has none")
     s.add_argument("--create-captures", action=argparse.BooleanOptionalAction, default=True,
                    help="create a capture from the decode's embedded catalog entry if none matches")
-    s.add_argument("--keep-unknown", action="store_true", help="also store records of type 'unknown'")
     s.add_argument("--link", action=argparse.BooleanOptionalAction, default=True,
                    help="run `link` afterwards when messages were added or changed (default on)")
-    s.add_argument("--strict", action="store_true", help="exit 1 if any decode has no capture")
+    s.add_argument("--strict", action="store_true",
+                   help="exit 1 if any document is not contract v1 or has no capture")
     s.set_defaults(fn=cmd_load_decodes)
     s = sub.add_parser("link", help="flags override the settings table, which overrides built-ins")
     s.add_argument("--simulcast-sec", type=float, help="default 120 (settings: link.simulcast_sec)")

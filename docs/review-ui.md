@@ -229,7 +229,7 @@ journalctl --user -u hfgcs-review -f
 - Existing DBs: `scripts/hfgcs_db.py --db data/hfgcs.db migrate`. Migration 0003 adds `captures.snr_peak_db`
   (back-filled from the stored catalog JSON), `messages.decoder_version`/`decoded_utc` and `message_decodes`.
   The review app needs migrations up to 0003.
-- Transcripts: `load-decodes` (docs/database.md §12) is idempotent. Run it after `ingest-catalog`, from the
+- Transcripts: `load-decodes` (docs/database.md §12; Decoding's output contract v1) is idempotent. Run it after `ingest-catalog`, from the
   same timer, and it never overwrites a row a person has edited or checked.
 
 ### 3.1 Choosing the Python interpreter
