@@ -1,99 +1,63 @@
-# HFGCS Swiss Army Tool - Starter
-# Airspy HF+ Discovery + SoapySDR
-# Per-channel adaptive squelch, scan, activity recording
-
-# Dependencies (Linux Mint / Ubuntu):
-#   sudo apt install python3-pip python3-numpy python3-scipy python3-soundfile soapysdr-tools
-#   # Then build/install libairspyhf + SoapyAirspyHF (see OpenWebRX wiki notes)
-#   pip install numpy scipy soundfile
+# HFGCS scanner for an Airspy HF+ Discovery (or any SoapySDR device).
+#
+# Scans the HFGCS channels from hfgcs.config, opens a voice-slot squelch on
+# activity, records USB audio with pre-roll until the signal drops for the
+# hang time, and appends one JSON line per recording to the catalog.
+#
+# SoapySDR comes from the system (sudo apt install python3-soapysdr); it is
+# imported lazily so the DSP and tests run without it.
 
 import argparse
 import sys
-import SoapySDR
-from SoapySDR import SOAPY_SDR_RX, SOAPY_SDR_CF32
-import numpy as np
-from scipy import signal
-import soundfile as sf
 import time
-import json
 from datetime import datetime, timezone
-from pathlib import Path
-from collections import deque
 
-# ====================== CONFIG ======================
-FREQUENCIES_KHZ = [
-    4724.0,   # Night primary
-    8992.0,
-    11175.0,  # Day primary / most active
-    15016.0,
-    # Add more as needed (ALE list, backups, etc.)
-]
+import numpy as np
 
-SAMPLE_RATE = 192000          # Safe rate for Airspy HF+ Discovery
-AUDIO_RATE = 8000             # Output WAV sample rate
-USB_BANDWIDTH = 3000          # USB filter bandwidth (Hz)
-DWELL_SECONDS = 2.0           # Time spent on each frequency while scanning
-HOLD_SECONDS = 8.0            # Minimum hold time once activity detected
-PREBUFFER_SECONDS = 1.5       # Audio pre-buffer
-NOISE_FLOOR_ALPHA = 0.02      # EMA smoothing for noise floor (lower = slower)
-SNR_THRESHOLD_DB = 8.0        # Activity threshold above noise floor
-MIN_ACTIVITY_SECONDS = 0.8    # Ignore very short bursts
-RECORD_DIR = Path("recordings")
-LOG_FILE = Path("hfgcs_catalog.jsonl")
+from hfgcs.capture import ChannelCapture, save_recording
+from hfgcs.config import Config, load_config
+from hfgcs.dsp import power_db
 
-# ====================== HELPERS ======================
+SETTLE_SECONDS = 0.12  # discard samples right after a retune
+BLOCK_SAMPLES = 8192
+
+
 def utc_now():
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(timezone.utc)
 
-def setup_device():
-    args = dict(driver="airspyhf")
-    sdr = SoapySDR.Device(args)
-    sdr.setSampleRate(SOAPY_SDR_RX, 0, SAMPLE_RATE)
-    sdr.setGainMode(SOAPY_SDR_RX, 0, True)  # AGC on
+
+def _soapy():
+    try:
+        import SoapySDR
+    except ImportError as exc:  # pragma: no cover - needs hardware stack
+        raise RuntimeError(
+            "SoapySDR Python bindings not found (sudo apt install python3-soapysdr)"
+        ) from exc
+    return SoapySDR
+
+
+def setup_device(cfg: Config):
+    SoapySDR = _soapy()
+    sdr = SoapySDR.Device(cfg.soapy_args)
+    sdr.setSampleRate(SoapySDR.SOAPY_SDR_RX, 0, cfg.iq_rate)
+    # Tuner AGC off by default: it makes dB squelch thresholds meaningless.
+    try:
+        sdr.setGainMode(SoapySDR.SOAPY_SDR_RX, 0, cfg.tuner_agc)
+    except Exception:
+        pass
     return sdr
 
-def make_usb_demod(sample_rate, audio_rate, bandwidth):
-    """Return a function that turns complex IQ into real USB audio."""
-    # Simple USB: shift, lowpass, resample
-    shift_freq = bandwidth / 2.0
-    t = np.arange(1024) / sample_rate  # small chunk size used later
-    # Precompute filter
-    nyq = sample_rate / 2
-    b, a = signal.butter(4, bandwidth / nyq, btype='low')
-    return b, a, shift_freq
 
-def demod_usb(iq, b, a, shift_freq, sample_rate, audio_rate):
-    if len(iq) == 0:
-        return np.array([])
-    t = np.arange(len(iq)) / sample_rate
-    shifted = iq * np.exp(-1j * 2 * np.pi * shift_freq * t)
-    filtered = signal.lfilter(b, a, shifted)
-    # Take real part (USB) and resample
-    real = np.real(filtered)
-    if sample_rate != audio_rate:
-        num = int(len(real) * audio_rate / sample_rate)
-        real = signal.resample(real, num)
-    # Normalize
-    if np.max(np.abs(real)) > 0:
-        real = real / np.max(np.abs(real)) * 0.9
-    return real.astype(np.float32)
-
-def power_db(iq):
-    if len(iq) == 0:
-        return -100.0
-    return 10 * np.log10(np.mean(np.abs(iq)**2) + 1e-12)
-
-# ====================== MAIN SCANNER ======================
 class HFGCSScanner:
-    def __init__(self):
-        self.sdr = setup_device()
-        self.rx_stream = self.sdr.setupStream(SOAPY_SDR_RX, SOAPY_SDR_CF32)
+    def __init__(self, cfg: Config):
+        SoapySDR = _soapy()
+        self.SoapySDR = SoapySDR
+        self.cfg = cfg
+        self.sdr = setup_device(cfg)
+        self.rx_stream = self.sdr.setupStream(SoapySDR.SOAPY_SDR_RX, SoapySDR.SOAPY_SDR_CF32)
         self.sdr.activateStream(self.rx_stream)
         self._wait_for_samples()
-        self.noise_floors = {f: -80.0 for f in FREQUENCIES_KHZ}
-        self.b, self.a, self.shift = make_usb_demod(SAMPLE_RATE, AUDIO_RATE, USB_BANDWIDTH)
-        RECORD_DIR.mkdir(exist_ok=True)
-        self.catalog = []
+        self.captures = {f: ChannelCapture(cfg, f) for f in cfg.channels_khz}
 
     def _wait_for_samples(self, timeout=2.0):
         """The HF+ stream returns timeouts until the first buffer is ready."""
@@ -102,144 +66,97 @@ class HFGCSScanner:
             if len(self.read_iq()):
                 return
 
-    def read_iq(self, nsamps=16384):
+    def read_iq(self, nsamps=BLOCK_SAMPLES):
         buff = np.zeros(nsamps, np.complex64)
         sr = self.sdr.readStream(self.rx_stream, [buff], nsamps)
         if sr.ret > 0:
-            return buff[:sr.ret]
+            return buff[: sr.ret]
         return np.array([], np.complex64)
 
-    def measure_noise(self, freq_khz, seconds=1.0):
-        self.sdr.setFrequency(SOAPY_SDR_RX, 0, freq_khz * 1000)
-        time.sleep(0.15)  # settle
-        powers = []
-        end = time.time() + seconds
+    def tune(self, freq_khz):
+        """Tune once, then drop the samples produced while the PLL settles."""
+        self.sdr.setFrequency(self.SoapySDR.SOAPY_SDR_RX, 0, freq_khz * 1000)
+        end = time.time() + SETTLE_SECONDS
         while time.time() < end:
+            self.read_iq()
+
+    def dwell(self, freq_khz):
+        cap = self.captures[freq_khz]
+        self.tune(freq_khz)
+        cap.retune(utc_now())
+        start = time.time()
+        while time.time() - start < self.cfg.dwell_seconds or cap.active:
             iq = self.read_iq()
-            if len(iq):
-                powers.append(power_db(iq))
-        if powers:
-            return np.median(powers)
-        return -80.0
+            if len(iq) == 0:
+                continue
+            for rec in cap.feed(iq):
+                self._save(rec)
+        for rec in cap.flush():
+            self._save(rec)
+
+    def _save(self, rec):
+        entry = save_recording(rec, self.cfg.record_dir, self.cfg.catalog_file)
+        print(
+            f"  -> {entry['file']} ({entry['duration_sec']:.1f}s, "
+            f"SNR peak {entry['snr_db_peak']} dB, start {entry['start_utc']})"
+        )
 
     def scan_once(self):
-        for freq in FREQUENCIES_KHZ:
-            print(f"[{utc_now()}] Tuning {freq} kHz")
-            self.sdr.setFrequency(SOAPY_SDR_RX, 0, freq * 1000)
-            time.sleep(0.12)
-
-            # Update noise floor slowly
-            noise = self.measure_noise(freq, 0.4)
-            self.noise_floors[freq] = (
-                NOISE_FLOOR_ALPHA * noise +
-                (1 - NOISE_FLOOR_ALPHA) * self.noise_floors[freq]
-            )
-            threshold = self.noise_floors[freq] + SNR_THRESHOLD_DB
-
-            # Dwell and look for activity
-            start = time.time()
-            activity_start = None
-            prebuffer = deque(maxlen=int(PREBUFFER_SECONDS * AUDIO_RATE))
-            recording = []
-            is_active = False
-
-            while time.time() - start < DWELL_SECONDS or is_active:
-                iq = self.read_iq(8192)
-                if len(iq) == 0:
-                    continue
-                p = power_db(iq)
-                audio = demod_usb(iq, self.b, self.a, self.shift, SAMPLE_RATE, AUDIO_RATE)
-
-                if p > threshold:
-                    if activity_start is None:
-                        activity_start = time.time()
-                    if time.time() - activity_start > MIN_ACTIVITY_SECONDS:
-                        is_active = True
-                        recording.extend(audio)
-                else:
-                    activity_start = None
-                    if not is_active:
-                        prebuffer.extend(audio)
-
-                if is_active and (time.time() - start > DWELL_SECONDS + HOLD_SECONDS):
-                    break
-
-                if not is_active and time.time() - start > DWELL_SECONDS:
-                    break
-
-            if is_active and recording:
-                self.save_recording(freq, list(prebuffer) + recording)
-
-    def save_recording(self, freq_khz, audio_samples):
-        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        filename = RECORD_DIR / f"HFGCS_{freq_khz:.0f}kHz_{ts}.wav"
-        sf.write(filename, np.array(audio_samples), AUDIO_RATE)
-        entry = {
-            "timestamp": utc_now(),
-            "frequency_khz": freq_khz,
-            "file": str(filename),
-            "duration_sec": len(audio_samples) / AUDIO_RATE,
-            "noise_floor_db": round(self.noise_floors[freq_khz], 1),
-            "notes": "USB voice candidate - review for EAM"
-        }
-        with open(LOG_FILE, "a") as f:
-            f.write(json.dumps(entry) + "\n")
-        print(f"  → Recorded {filename.name} ({entry['duration_sec']:.1f}s)")
-
-    def close(self):
-        try:
-            self.sdr.deactivateStream(self.rx_stream)
-        except Exception:
-            pass
-        try:
-            self.sdr.closeStream(self.rx_stream)
-        except Exception:
-            pass
+        for freq in self.cfg.channels_khz:
+            print(f"[{utc_now().isoformat()}] {freq:.1f} kHz")
+            self.dwell(freq)
 
     def probe(self, seconds=0.8):
-        """Open the Airspy HF+, measure each channel, and release the device."""
+        """Open the device, measure the voice slot on each channel, release it."""
         try:
             info = dict(self.sdr.getHardwareInfo())
         except Exception:
             info = {}
         label = info.get("label") or info.get("driver") or "airspyhf"
-        serial = info.get("serial", "?")
-        rate = self.sdr.getSampleRate(SOAPY_SDR_RX, 0)
-        print(f"Device: {label} serial={serial}")
-        print(f"Sample rate: {rate:.0f} Hz")
-        for freq in FREQUENCIES_KHZ:
-            noise = self.measure_noise(freq, seconds)
-            print(f"  {freq:8.1f} kHz  full-band power {noise:6.1f} dBFS")
+        print(f"Device: {label} serial={info.get('serial', '?')}")
+        print(f"Sample rate: {self.sdr.getSampleRate(self.SoapySDR.SOAPY_SDR_RX, 0):.0f} Hz")
+        for freq in self.cfg.channels_khz:
+            cap = self.captures[freq]
+            self.tune(freq)
+            cap.retune(utc_now())
+            powers = []
+            end = time.time() + seconds
+            while time.time() < end:
+                iq = self.read_iq()
+                if len(iq):
+                    _, p = cap.demod.process(iq)
+                    powers.append(power_db(p))
+            level = np.median(powers) if powers else float("nan")
+            print(f"  {freq:8.1f} kHz  voice-slot power {level:6.1f} dBFS")
 
     def run(self):
-        print("HFGCS Scanner started. Ctrl+C to stop.")
-        print(f"Frequencies: {FREQUENCIES_KHZ}")
+        print("HFGCS scanner started. Ctrl+C to stop.")
+        print(f"Receiver {self.cfg.receiver_id}; channels {self.cfg.channels_khz} kHz")
         try:
             while True:
                 self.scan_once()
         except KeyboardInterrupt:
             print("\nStopping...")
-        finally:
-            self.close()
+
+    def close(self):
+        for call in (self.sdr.deactivateStream, self.sdr.closeStream):
+            try:
+                call(self.rx_stream)
+            except Exception:
+                pass
+
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="HFGCS scanner for Airspy HF+ Discovery")
-    parser.add_argument(
-        "--probe",
-        action="store_true",
-        help="Tune each HFGCS channel, print power, and exit",
-    )
-    parser.add_argument(
-        "--probe-seconds",
-        type=float,
-        default=0.8,
-        help="Seconds to measure on each channel during --probe",
-    )
+    parser = argparse.ArgumentParser(description="HFGCS scanner for Airspy HF+ / SoapySDR")
+    parser.add_argument("--config", help="TOML file overriding hfgcs.config defaults")
+    parser.add_argument("--probe", action="store_true", help="Measure each channel and exit")
+    parser.add_argument("--probe-seconds", type=float, default=0.8)
     args = parser.parse_args(argv)
+    cfg = load_config(args.config)
     try:
-        scanner = HFGCSScanner()
+        scanner = HFGCSScanner(cfg)
     except Exception as exc:
-        print(f"Could not open Airspy HF+: {exc}", file=sys.stderr)
+        print(f"Could not open the SDR: {exc}", file=sys.stderr)
         print("If OpenWebRX is using the radio, stop that client or use hfgcs_waterfall.py.", file=sys.stderr)
         return 1
     try:
@@ -248,9 +165,9 @@ def main(argv=None):
         else:
             scanner.run()
     finally:
-        if args.probe:
-            scanner.close()
+        scanner.close()
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())
