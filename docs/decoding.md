@@ -264,6 +264,8 @@ late start. Body CER and exact-match are unchanged, because detection does not a
 - One gold clip (eam-ed75798a) holds two messages, and CER above 1 there is a labelling and segmentation mismatch.
 - Gold has only 8 EAMs, so differences under about 0.03 are noise. Silver confirms the ordering of the top rows.
 
+Fine-tuning plan (CPU LoRA, augmentation, silver-label risk, gold-label power analysis): `docs/finetune.md`.
+
 Next: `medium.en` or `distil-large-v3` as a second pass for low-confidence bodies (needs more RAM or a GPU),
 the 3-way vote, and a CTC forced-alignment rescoring pass over the phonetic lexicon.
 
