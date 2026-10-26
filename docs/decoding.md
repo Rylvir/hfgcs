@@ -166,7 +166,14 @@ python -m decoding.evaluate --subset silver --config baseline --config best --ou
 | no_vad_snap | 0.591 | 0.306 | 0.500 | 0.667 (6) | 0.967 | 0.090 |
 | nv_cond_prev | 0.416 | 0.257 | 0.467 | 0.667 (6) | 1.000 | 0.132 |
 
-**Chosen defaults** (`AsrConfig()` = the `best` row): VAD off; `condition_on_previous_text=True`; EAM prompt plus
+**Production default = `pipeline.DecodeConfig()` = eval config `default` (alias `best_vote`):** the `best` single
+pass below, plus the gated 3-way-vote second pass (next subsection), with preamble fusion off. Gold body CER is
+**0.486** and silver **0.364**. CPU is 1.35× (silver) to 1.77× (gold) the single pass, and the second-pass decodes
+share the first pass's loaded model, so they add no extra RAM. `python -m decoding.evaluate` with no `--config`
+scores this default. Usage: `Decoder().decode(path, day_callsigns)` returns
+`{"records", "second_pass": {"fired", "passes"}, "duration_s"}`.
+
+**Chosen first pass** (`AsrConfig()` = the `best` row): VAD off; `condition_on_previous_text=True`; EAM prompt plus
 hotwords; `bp_norm` preprocessing; `hallucination_silence_threshold=2.0`; then `snap.snap_words` on the word list
 before the parser. On gold, `best` (0.542) and `no_vad_snap` (0.518) are within noise (about 6 characters of 249).
 On silver, `best` is far ahead (0.387 vs 0.591, median 0.229 vs 0.306), so pooled over both it wins (about 0.42 vs
@@ -193,7 +200,8 @@ evaluate process is about 1.7 GB. `vad_t10_pad` was stopped at 10/14 gold clips 
 **What did not help:** chunked decoding with our own VAD windows (0.91), `noskip` (all skip guards off: 0.566 without VAD), dropping `hallucination_silence_threshold` (0.839, loops return), the closed-vocabulary
 `suppress_tokens` whitelist (0.631: it forces garbage words into letters), and `afftdn` denoise (0.627).
 
-**Optional second pass: 3-way character vote (`vote.py`, config `best_vote`; default stays single pass).**
+**Second pass: 3-way character vote (`vote.py`, config `best_vote` = `default`; on by default since 2026-10-26,
+turn it off with `DecodeConfig(second_pass=False)`).**
 - *Trigger* (`vote.needs_second_pass`): the first-pass EAM's `confidence.reads_agree_ratio < 0.3`, which includes
   every single-read EAM. Clips with no EAM body (radio checks, noise) never trigger. Structural flags were tried as
   the trigger, but `single_read`/`length_mismatch` are on about 85 % of current first passes, so they select nothing.

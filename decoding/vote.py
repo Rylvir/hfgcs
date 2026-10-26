@@ -18,6 +18,12 @@ from .metrics import edit_distance
 # were tried as triggers too, but fire on ~85 % of current first passes.
 AGREE_THRESHOLD = 0.3
 SECOND_PASS_CONFIGS = ("no_vad_snap", "baseline")  # evaluate.CONFIGS names
+# The same two passes as (AsrConfig overrides, apply snap_words) for the
+# pipeline, which must not import the eval harness. A test keeps them in sync.
+SECOND_PASS_PASSES: tuple[tuple[dict, bool], ...] = (
+    ({"vad_filter": False, "condition_on_previous_text": False}, True),
+    ({"vad_filter": True, "condition_on_previous_text": False}, False),
+)
 
 
 def medoid(bodies: Sequence[str]) -> int:

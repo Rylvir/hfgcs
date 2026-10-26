@@ -196,12 +196,24 @@ def _read_wav16k(path: Path):
     return pcm.astype(np.float32) / 32768.0
 
 
+def _same_model(a: AsrConfig, b: AsrConfig) -> bool:
+    fields = ("model", "device", "compute_type", "cpu_threads")
+    return all(getattr(a, f) == getattr(b, f) for f in fields)
+
+
 class Transcriber:
-    def __init__(self, cfg: Optional[AsrConfig] = None):
+    def __init__(self, cfg: Optional[AsrConfig] = None, share_with: Optional["Transcriber"] = None):
+        """``share_with``: reuse another Transcriber's loaded WhisperModel when
+        model, device and compute type match (second-pass decodes then cost no
+        extra RAM)."""
         self.cfg = cfg or AsrConfig()
         self._model = None
+        self._share = share_with
 
     def _load(self):
+        o = self._share
+        if self._model is None and o is not None and _same_model(o.cfg, self.cfg):
+            self._model = o._load()
         if self._model is None:
             from faster_whisper import WhisperModel  # lazy: optional dependency
 

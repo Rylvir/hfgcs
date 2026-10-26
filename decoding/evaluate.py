@@ -39,9 +39,10 @@ CONFIGS: dict[str, dict] = {
     # Overrides are relative to the v0.1 smoke-test defaults (VAD on, see
     # V01_BASE) so every row in the docs table keeps its cache key.
     "baseline": {},  # v0.1 defaults from the first smoke test
-    # = AsrConfig() + snap_words
+    # = AsrConfig() + snap_words, single pass (first pass of the default "best_vote")
     "best": {"vad_filter": False, "condition_on_previous_text": True, "post_snap": True},
-    # best + optional second pass: 3-way character vote on low-agreement EAMs
+    # best + second pass: 3-way character vote on low-agreement EAMs
+    # (= pipeline.DecodeConfig(), the production default since 2026-10-26)
     "best_vote": {
         "vad_filter": False,
         "condition_on_previous_text": True,
@@ -51,6 +52,7 @@ CONFIGS: dict[str, dict] = {
     "best_pre_vote": {**_BEST, "post_preamble": "vote"},
     "best_pre_patch": {**_BEST, "post_preamble": "patch"},
     "best_vote_pre_patch": {**_BEST, "post_vote": list(SECOND_PASS_CONFIGS), "post_preamble": "patch"},
+    "default": {**_BEST, "post_vote": list(SECOND_PASS_CONFIGS)},  # alias of best_vote
     "best_vote_always": {
         "vad_filter": False,
         "condition_on_previous_text": True,
@@ -321,7 +323,7 @@ def main(argv=None) -> int:
     print(f"subset={args.subset} clips={len(labels)} missileer machine CER={m['cer_micro']} (n={m['n']})")
     print(HEADER)
     results = {}
-    for name in args.config or ["baseline"]:
+    for name in args.config or ["default"]:
         res = evaluate(labels, name, CONFIGS[name], args.cache, args.cached_only)
         if res["summary"]["missing"]:
             print(f"<!-- {name}: {res['summary']['missing']} clips not cached, skipped -->")
