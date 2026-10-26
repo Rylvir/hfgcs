@@ -1,6 +1,6 @@
 numpy
 scipy
-soundfile==0.12.1
+soundfile==0.14.0
 websockets==15.0.1
 # SoapySDR Python bindings match the system library. On Debian/Ubuntu:
 #   sudo apt install python3-soapysdr
