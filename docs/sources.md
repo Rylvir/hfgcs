@@ -80,8 +80,47 @@ sync-framed IMA ADPCM or raw int16 and resampled to 8 kHz. The server's
 - One websocket per scanner; no waterfall is requested beyond what the server
   sends anyway.
 
-This source was built against a local mock of the protocol and has **not yet
-been run against the live server**.
+### Waiting for the right profile (long-running / service mode)
+
+With `--wait-for-profile` (or `[openwebrx] wait_for_profile = true`) a channel
+outside the active profile is not an error. The scanner stays connected,
+leaves its demodulator off and idles. When the owner (or anyone) selects a
+profile that covers the channel, it starts recording by itself. If the profile
+later moves away, it closes the open recording and idles again. It never
+retunes the radio back. State changes are logged once each:
+
+    WARNING WAITING: 8992 kHz is not in the active profile airspyhf|hfgcs-15016 (...); idling ...
+    WARNING RECORDING: 8992 kHz is covered by the active profile airspyhf|hfgcs-8992 (...)
+
+In this mode reconnects keep going (backoff capped at 5 min) instead of giving
+up after `max_reconnects`, so a service survives an OpenWebRX restart.
+
+Defaults: **on** when `--duration` is not given (service mode), **off** for
+one-shot runs with `--duration`, `--probe` or `--select-profile`. A one-shot run
+outside the active profile still exits with code 2. `--no-wait-for-profile`
+forces it off.
+
+### One-shot profile selection (`--select-profile NAME`)
+
+For a deliberate, owner-approved switch of the shared radio:
+
+```bash
+# the key is read from the environment and never printed or logged
+set -a; . ~/.config/hfgcs/hfgcs.env; set +a
+python hfgcs_scanner.py --source openwebrx --url http://localhost:8073 \
+    --select-profile "HFGCS 8992 kHz" [--unlock-key-env OPENWEBRX_MAGIC_KEY]
+```
+
+`NAME` is a profile id (`sdr|profile`), its full name, or a name suffix such as
+`HFGCS 8992 kHz` (it must match exactly one profile). The command sends **one**
+`selectprofile` (with the OpenWebRX+ unlock "magic key" as `params.key`), waits for the
+server's new `config`, prints the profile before and after, and exits (0 = done
+or already active, 1 = key variable not set, 3 = refused or not confirmed; a
+locked-profile refusal is reported, not retried). Nothing else changes:
+`allow_profile_switch` stays false, and the recorder itself never needs the key.
+
+This source was first run against a live OpenWebRX+ 1.2.126 server on
+2026-10-26.
 
 ## KiwiSDR (`--source kiwisdr`)
 
