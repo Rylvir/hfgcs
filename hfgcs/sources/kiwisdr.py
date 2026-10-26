@@ -112,6 +112,19 @@ def resolve(host: str) -> str | None:
         return None
 
 
+# Kiwi audio runs at 12 kHz (20.25 kHz on some 3-channel builds); kiwirecorder writes the
+# measured rate as an integer, e.g. 11999 or 12001, which no small rational resampler handles.
+KIWI_NOMINAL_RATES = (12000, 20250)
+
+
+def nominal_rate(rate: int, tolerance: float = 0.005) -> int:
+    """Snap a measured Kiwi rate within ``tolerance`` of a nominal one to it."""
+    for nominal in KIWI_NOMINAL_RATES:
+        if abs(rate - nominal) <= tolerance * nominal:
+            return nominal
+    return rate
+
+
 def parse_wav_header(read) -> tuple[int, int]:
     """Read a (streaming) WAV header with ``read(n)``; return (rate, channels)."""
     riff = read(12)
@@ -160,7 +173,8 @@ class KiwiSession:
 
     def _stdout(self) -> None:
         try:
-            self.rate, self.channels = parse_wav_header(self._read_exact)
+            rate, self.channels = parse_wav_header(self._read_exact)
+            self.rate = nominal_rate(rate)
             self.header_ready.set()
             frame = 2 * self.channels
             while True:
@@ -233,6 +247,7 @@ class KiwiSource(BaseSource):
         self._session_start = 0.0
         self._rate = 12_000
         self._gap = False
+        self._last_audio = 0.0  # clock time of the last block with any non-zero sample
         self.log: list[str] = []  # human-readable decisions (also logged)
         self._blocked = self._load_blocklist()
 
@@ -419,7 +434,7 @@ class KiwiSource(BaseSource):
             if session.rate:
                 self.session = session
                 self._rate = session.rate
-                self._session_start = self._clock()
+                self._session_start = self._last_audio = self._clock()
                 self._gap = True
                 return True
             self._session_failed(host, session)
@@ -474,6 +489,8 @@ class KiwiSource(BaseSource):
         try:
             audio = session.q.get(timeout=timeout)
         except queue.Empty:
+            if not session.ended.is_set() and self._stalled(session):
+                return Chunk(np.zeros(0, np.float32), self._rate)
             if session.ended.is_set():
                 host = self.current
                 self.session = None
@@ -488,6 +505,23 @@ class KiwiSource(BaseSource):
                     self._not_before = self._clock() + self.settings.rest_between_sessions_s
                 self._gap = True
             return Chunk(np.zeros(0, np.float32), self._rate)
+        if np.any(audio):
+            self._last_audio = self._clock()
+        elif self._stalled(session):
+            return Chunk(np.zeros(0, np.float32), self._rate)
         self._failures = 0
         gap, self._gap = self._gap, False
         return Chunk(audio, self._rate, gap=gap)
+
+    def _stalled(self, session: KiwiSession) -> bool:
+        """Watchdog: drop a connected session that gives no (or only all-zero) samples."""
+        limit = self.settings.stall_timeout_s
+        if not limit or self._clock() - self._last_audio < limit:
+            return False
+        host = self.current
+        self.session = None
+        session.reason = session.reason or f"no audio for {limit:.0f} s (stalled or silent receiver)"
+        self._session_failed(host, session)
+        self._backoff()
+        self._gap = True
+        return True

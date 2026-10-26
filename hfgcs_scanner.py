@@ -64,7 +64,9 @@ class HFGCSScanner:
 
     def capture_for(self, freq: float, rate: int) -> ChannelCapture:
         cap = self.captures.get(freq)
-        if cap is None or cap.input_rate != rate:
+        # A new receiver (e.g. a KiwiSDR host rotation) gets a new capture so the
+        # catalog's receiver_id follows the host that actually made the audio.
+        if cap is None or cap.input_rate != rate or cap.receiver_id != self.source.receiver_id:
             cap = ChannelCapture(
                 self.cfg,
                 freq,

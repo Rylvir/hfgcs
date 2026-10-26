@@ -168,6 +168,7 @@ class KiwiSettings:
     high_cut_hz: float = 3000.0
     session_max_s: float = 22 * 60.0  # release the slot before the 30 min limit
     rest_between_sessions_s: float = 60.0
+    stall_timeout_s: float = 20.0  # drop a session with no non-zero samples for this long (0 = off)
     min_users_max: int = 4  # skip receivers with fewer slots
     allow_proxy: bool = False  # proxy.kiwisdr.com bandwidth is donated
     blocklist: tuple[str, ...] = ()  # "host" or "host:port"
