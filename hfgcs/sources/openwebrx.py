@@ -54,6 +54,7 @@ from urllib.parse import urlparse
 import numpy as np
 
 from ..config import OpenWebRXSettings
+from ..runstate import describe_close
 from .base import BaseSource, Chunk, SourceError, TuneRefused, db
 
 log = logging.getLogger(__name__)
@@ -280,6 +281,11 @@ class OpenWebRXSource(BaseSource):
         # "recording" or "waiting": logged once per change, not per poll.
         self.state: str | None = None
         self.log_messages: list[str] = []  # server log_message texts (e.g. "profile is locked")
+        # Connection bookkeeping for the event log (monotonic clock times).
+        self.connects = 0
+        self._last_audio_at: float | None = None
+        self._down_since: float | None = None  # set by a disconnect, cleared when audio resumes
+        self._reconnect_attempt = 0
 
     # -- connection ---------------------------------------------------------
     @property
@@ -293,6 +299,9 @@ class OpenWebRXSource(BaseSource):
     def close(self) -> None:
         ws, self.ws = self.ws, None
         if ws is not None:
+            self.connection_event(
+                "disconnect", f"closing {self.url} (client shutdown)", url=self.url, reason="client shutdown"
+            )
             try:
                 ws.close()
             except Exception:  # pragma: no cover - best effort
@@ -310,6 +319,26 @@ class OpenWebRXSource(BaseSource):
         self.decoder = SyncAdpcmDecoder()
         self.config, self.window = {}, None
         self._dsp_started = False
+        try:
+            self._connect_once_inner()
+        except SourceError as exc:
+            self.connection_event(
+                "connect_failed", f"{exc}", logging.WARNING, url=self.url, error=str(exc),
+                attempt=self._reconnect_attempt or None,
+            )
+            raise
+        self.connects += 1
+        down = None if self._down_since is None else round(self._clock() - self._down_since, 3)
+        n = self._reconnect_attempt
+        again = "" if down is None else f"; reconnected after {down:.1f} s (attempt {n})"
+        self.connection_event(
+            "connect",
+            f"connected to {self.url} ({self.server_version}), {self.window.label}{again}",
+            url=self.url, server=self.server_version, window=self.window.label,
+            reconnect=self.connects > 1, attempt=self._reconnect_attempt or None, down_s=down,
+        )
+
+    def _connect_once_inner(self) -> None:
         try:
             self.ws = self._connect(self.url, self.settings)
             self.ws.send("SERVER DE CLIENT client=hfgcs type=receiver")
@@ -338,7 +367,6 @@ class OpenWebRXSource(BaseSource):
         if self.window is None:
             self._drop()
             raise SourceError(f"{self.url}: server sent no center_freq/samp_rate")
-        log.info("connected to %s (%s), %s", self.url, self.server_version, self.window.label)
 
     def _drop(self) -> None:
         ws, self.ws = self.ws, None
@@ -361,10 +389,26 @@ class OpenWebRXSource(BaseSource):
             self.sent.append(obj)
         self.ws.send(json.dumps(obj))
 
+    def _disconnected(self, why: str, exc: BaseException | None = None) -> None:
+        """Record a lost connection (once per outage) before reconnecting."""
+        if self._down_since is None:
+            self._down_since = self._clock()
+        info = describe_close(exc)
+        code = f" (close code {info['close_code']}" if "close_code" in info else ""
+        if code:
+            code += f", reason {info['close_reason']!r})" if info.get("close_reason") else ")"
+        self.connection_event(
+            "disconnect", f"lost {self.url}: {why}{code}", logging.WARNING,
+            url=self.url, reason=why, **info,
+        )
+
     def _reconnect(self) -> None:
         """Reconnect with exponential backoff and jitter, then retune."""
         self._drop()
         self._gap = True
+        if self._down_since is None:
+            self._down_since = self._clock()
+        self._reconnect_attempt = 0
         while True:
             self.failures += 1
             if self.failures > self.settings.max_reconnects and not self.settings.wait_for_profile:
@@ -373,13 +417,17 @@ class OpenWebRXSource(BaseSource):
                 self.settings.backoff_max_s,
                 self.settings.backoff_initial_s * 2 ** (self.failures - 1),
             ) * random.uniform(0.8, 1.2)
-            log.warning("OpenWebRX connection lost; reconnecting in %.0f s", delay)
+            self._reconnect_attempt += 1
+            self.connection_event(
+                "reconnect_attempt",
+                f"reconnecting to {self.url} in {delay:.1f} s (attempt {self._reconnect_attempt})",
+                url=self.url, attempt=self._reconnect_attempt, delay_s=round(delay, 3),
+            )
             self._sleep(delay)
             try:
                 self._connect_once()
-            except SourceError as exc:
-                log.warning("reconnect failed: %s", exc)
-                continue
+            except SourceError:
+                continue  # logged as connect_failed
             if self.dial_khz is not None:
                 self._dsp_started = False
                 outside = self._outside_reason(self.dial_khz)
@@ -667,19 +715,30 @@ class OpenWebRXSource(BaseSource):
             except SourceError:
                 raise
             except Exception as exc:  # connection closed or broken
-                log.warning("OpenWebRX stream error: %s", exc)
+                self._disconnected("connection closed" if "closed" in type(exc).__name__.lower()
+                                   else "stream error", exc)
                 self._reconnect()
                 continue
             try:
                 audio = self._handle(msg)
             except SourceError as exc:  # server asked us to back off
-                log.warning("%s", exc)
+                self._disconnected(str(exc))
                 self.failures = max(self.failures, 3)
                 self._reconnect()
                 continue
             if audio is None or len(audio) == 0 or self.off_channel_reason is not None:
                 continue
             self.failures = 0
+            now = self._clock()
+            if self._down_since is not None:
+                since = self._last_audio_at if self._last_audio_at is not None else self._down_since
+                gap_s = round(now - since, 3)
+                self.connection_event(
+                    "audio_resumed", f"audio from {self.url} resumed after a {gap_s:.2f} s gap",
+                    url=self.url, gap_s=gap_s, down_s=round(now - self._down_since, 3),
+                )
+                self._down_since = None
+            self._last_audio_at = now
             gap, self._gap = self._gap or self._idle_gap_sent, False
             self._idle_gap_sent = False
             return Chunk(audio, self.sample_rate, level_db=self.last_level_db, gap=gap)

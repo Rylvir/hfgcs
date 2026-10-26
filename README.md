@@ -114,6 +114,13 @@ Recordings and the JSONL log are structured for easy review or contribution to p
 
 See [docs/review-ui.md](docs/review-ui.md) for configuration, security and the systemd units in `deploy/`.
 
+## Deploying updates on hilltop
+Run `deploy/deploy.sh` (as the service user, never sudo) instead of restarting units by hand. OpenWebRX
+stops the SDR when its only client, `hfgcs-8992`, disconnects, so every needless restart is an audio gap.
+The script fast-forwards to `origin/main`, restarts only the units whose code changed, waits until a
+recorder is idle, defers recorder restarts inside quiet windows, and restarts the Kiwi units one at a time
+with `hfgcs-8992` last. `deploy/deploy.sh --dry-run` shows the plan. See [docs/deploy.md](docs/deploy.md).
+
 ## License
 
 MIT, see [LICENSE](LICENSE). If Apache-2.0 code (for example from

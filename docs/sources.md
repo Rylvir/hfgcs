@@ -95,6 +95,12 @@ retunes the radio back. State changes are logged once each:
 In this mode reconnects keep going (backoff capped at 5 min) instead of giving
 up after `max_reconnects`, so a service survives an OpenWebRX restart.
 
+Connection events (connect, disconnect with the close code, reconnect attempts,
+and the length of the audio gap when audio resumes) are logged with UTC
+timestamps and appended to `logs/<unit>-connection.log` as JSON lines; see
+docs/deploy.md. Restart `hfgcs-8992` only through `deploy/deploy.sh`: OpenWebRX
+stops the SDR whenever its only client disconnects.
+
 Defaults: **on** when `--duration` is not given (service mode), **off** for
 one-shot runs with `--duration`, `--probe` or `--select-profile`. A one-shot run
 outside the active profile still exits with code 2. `--no-wait-for-profile`

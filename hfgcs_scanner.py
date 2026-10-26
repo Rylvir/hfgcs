@@ -21,6 +21,7 @@ import numpy as np
 from hfgcs.capture import ChannelCapture, save_recording
 from hfgcs.config import SOURCE_NAMES, Channel, Config, load_config
 from hfgcs.dsp import power_db
+from hfgcs.runstate import ConnectionEvents, RunState, safe_name, systemd_unit_name
 from hfgcs.sources import AudioSource, SourceError, TuneRefused, make_source
 
 READ_TIMEOUT = 0.5
@@ -64,9 +65,21 @@ def _settle_stdio() -> None:
 class HFGCSScanner:
     """Drives one source: tune, feed ChannelCapture, save recordings."""
 
-    def __init__(self, cfg: Config, source: AudioSource | None = None):
+    def __init__(
+        self,
+        cfg: Config,
+        source: AudioSource | None = None,
+        *,
+        state: RunState | None = None,
+        events: ConnectionEvents | None = None,
+    ):
         self.cfg = cfg
         self.source = source if source is not None else make_source(cfg)
+        # Run-state file for the deploy script (idle/capturing, last audio) and the
+        # connection event log; both optional (see hfgcs/runstate.py).
+        self.state = state
+        if events is not None:
+            self.source.events = events
         self.captures: dict[float, ChannelCapture] = {}
         self.channels: list[float] = []
         self.saved: list[dict] = []
@@ -129,6 +142,7 @@ class HFGCSScanner:
         self.source.tune(freq)
         cap = self.capture_for(freq, self.source.sample_rate)
         cap.retune(utc_now())
+        self._track(cap)
         elapsed = 0.0
         while seconds is None or elapsed < seconds or cap.active:
             chunk = self.source.read(READ_TIMEOUT)
@@ -140,14 +154,29 @@ class HFGCSScanner:
                     self._save(rec)
                 cap = self.capture_for(freq, chunk.rate)
                 cap.retune(chunk.t0 or utc_now())
+                self._track(cap)
             if len(chunk.samples) == 0:
                 continue
             elapsed += len(chunk.samples) / chunk.rate
             for rec in cap.feed(chunk.samples, chunk.level_db):
                 self._save(rec)
+            self._track(cap, audio=True)
         for rec in cap.flush():
             self._save(rec)
+        self._track(cap)
         return elapsed
+
+    def _track(self, cap: ChannelCapture, audio: bool = False) -> None:
+        """Keep the state file current: "capturing" while a recording is pending or open."""
+        if self.state is None:
+            return
+        self.state.set(
+            "capturing" if cap.active else "idle",
+            receiver=self.source.receiver_id,
+            channel_khz=cap.frequency_khz,
+        )
+        if audio:
+            self.state.audio()
 
     def run(self, max_seconds: float | None = None) -> None:
         print(f"HFGCS scanner: source {self.source.name}, receiver {self.source.receiver_id}")
@@ -195,7 +224,11 @@ class HFGCSScanner:
         return levels
 
     def close(self):
-        self.source.close()
+        try:
+            self.source.close()
+        finally:
+            if self.state is not None:
+                self.state.set("stopped")
 
 
 def apply_cli(cfg: Config, args) -> Config:
@@ -305,8 +338,45 @@ def build_parser():
     g.add_argument("--sample-rate", type=int, help="raw IQ sample rate")
     g.add_argument("--center-khz", type=float, help="IQ recording centre frequency")
     g.add_argument("--realtime", action="store_true", help="pace replay at real time")
+    g = p.add_argument_group("run state (read by deploy/deploy.sh)")
+    g.add_argument(
+        "--state-name",
+        help="name for the state file and connection log (default: $HFGCS_STATE_NAME, else the "
+        "hfgcs-* systemd unit this runs in; neither: no state file unless --state-file is given)",
+    )
+    g.add_argument("--state-file", help="state file path (default: $XDG_RUNTIME_DIR/hfgcs/<name>.state)")
+    g.add_argument(
+        "--events-log", help="connection events as JSON lines (default: logs/<name>-connection.log)"
+    )
+    g.add_argument(
+        "--no-state-file", action="store_true", help="write neither the state file nor the events log"
+    )
     p.add_argument("-v", "--verbose", action="store_true")
     return p
+
+
+def run_state_name(args) -> str | None:
+    """--state-name, $HFGCS_STATE_NAME, or the hfgcs-* systemd unit we run in (else None)."""
+    if args.state_name:
+        return safe_name(args.state_name)
+    if os.environ.get("HFGCS_STATE_NAME"):
+        return safe_name(os.environ["HFGCS_STATE_NAME"])
+    unit = systemd_unit_name()
+    if unit and unit.startswith("hfgcs"):
+        return safe_name(unit)
+    return None
+
+
+def make_run_state(args) -> tuple[RunState | None, ConnectionEvents | None]:
+    if args.no_state_file or args.probe:
+        return None, None
+    name = run_state_name(args)
+    if name is None and not args.state_file and not args.events_log:
+        return None, None
+    name = name or "hfgcs-scanner"
+    state = RunState(name, args.state_file) if (args.state_file or run_state_name(args)) else None
+    events_path = args.events_log or os.path.join("logs", f"{name}-connection.log")
+    return state, ConnectionEvents(events_path, name=name, state=state)
 
 
 def select_profile(cfg: Config, name: str, key_env: str) -> int:
@@ -365,7 +435,8 @@ def _main(argv=None):
     scanner = None
     try:
         cfg = apply_cli(load_config(args.config), args)
-        scanner = HFGCSScanner(cfg)
+        state, events = make_run_state(args)
+        scanner = HFGCSScanner(cfg, state=state, events=events)
         scanner.start()
     except (SourceError, ValueError) as exc:
         print(f"Could not start the {args.source or 'configured'} source: {exc}", file=sys.stderr)

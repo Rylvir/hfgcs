@@ -1,0 +1,15 @@
+# Quiet windows for deploy/deploy.sh. Copy to ~/.config/hfgcs/quiet-windows.toml.
+# Inside a window, recorder restarts (hfgcs-8992, hfgcs-kiwi-*) are deferred and remembered
+# for the next run; the review and public pages still restart. `--force UNIT` overrides.
+# ALL TIMES ARE UTC. End is exclusive. Entries are strings or { span = "...", note = "..." }.
+
+# One-off windows: START/END, each ending in Z (or an explicit offset, converted to UTC).
+windows = [
+  { span = "2026-10-26T23:45Z/2026-10-27T07:00Z", note = "tonight's watch" },
+  # "2026-11-02T00:00Z/2026-11-02T06:00Z",
+]
+
+# Recurring daily windows: "HH:MM-HH:MM" in UTC; may wrap past midnight (e.g. 23:00-02:00).
+daily = [
+  # { span = "23:45-01:00", note = "evening EAM peak" },
+]

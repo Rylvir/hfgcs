@@ -327,6 +327,8 @@ class KiwiSource(BaseSource):
         self._gap = False
         self._last_audio = 0.0  # clock time of the last block with any non-zero sample
         self.log: list[str] = []  # human-readable decisions (also logged)
+        self._down_since: float | None = None  # a session ended; cleared when audio resumes
+        self._last_audio_at: float | None = None  # clock time of the last block received
         self._blocked = self._load_blocklist()
 
     # -- policy ------------------------------------------------------------------
@@ -521,8 +523,16 @@ class KiwiSource(BaseSource):
                 self._rate = session.rate
                 self._session_start = self._last_audio = self._clock()
                 self._gap = True
+                self.connection_event(
+                    "connect", f"streaming from {host} at {self._rate} Hz", host=str(host),
+                    rate=self._rate,
+                )
                 return True
             self._session_failed(host, session)
+            self.connection_event(
+                "connect_failed", f"{host}: {session.reason or 'connect failed'}", logging.WARNING,
+                host=str(host), error=session.reason or "connect failed",
+            )
         return False
 
     def _session_failed(self, host: KiwiHost, session: KiwiSession) -> None:
@@ -540,6 +550,12 @@ class KiwiSource(BaseSource):
         self._failures += 1
         self._note(f"{host}: {reason}; abandoned, retired {seconds / 60:.0f} min (no retry)")
 
+    def _lost(self, host, why: str) -> None:
+        """A running session ended (not by us closing the source)."""
+        if self._down_since is None:
+            self._down_since = self._clock()
+        self.connection_event("disconnect", f"{host}: {why}", logging.WARNING, host=str(host), reason=why)
+
     def _end_session(self, why: str, rest: bool = True) -> None:
         session, self.session = self.session, None
         if session is None:
@@ -547,6 +563,10 @@ class KiwiSource(BaseSource):
         session.stop()
         self._release()
         self._note(f"release {self.current}: {why}")
+        if rest:
+            self._lost(self.current, why)
+        else:
+            self.connection_event("disconnect", f"{self.current}: {why}", host=str(self.current), reason=why)
         if rest:
             rest_s = self.settings.rest_between_sessions_s * random.uniform(1.0, 1.3)
             self._not_before = self._clock() + rest_s
@@ -586,6 +606,7 @@ class KiwiSource(BaseSource):
                 self.session = None
                 ran = self._clock() - self._session_start
                 session.wait_stderr()  # a session-end line may still be in the pipe
+                self._lost(host, session.reason or session.session_end or f"stream ended after {ran:.0f} s")
                 if session.reason or session.session_end or ran < 60:
                     self._session_failed(host, session)
                     self._backoff()
@@ -601,6 +622,16 @@ class KiwiSource(BaseSource):
         elif self._stalled(session):
             return Chunk(np.zeros(0, np.float32), self._rate)
         self._failures = 0
+        now = self._clock()
+        if self._down_since is not None and len(audio):
+            since = self._last_audio_at if self._last_audio_at is not None else self._down_since
+            gap_s = round(now - since, 3)
+            self.connection_event(
+                "audio_resumed", f"audio from {self.current} resumed after a {gap_s:.1f} s gap",
+                host=str(self.current), gap_s=gap_s, down_s=round(now - self._down_since, 3),
+            )
+            self._down_since = None
+        self._last_audio_at = now
         gap, self._gap = self._gap, False
         return Chunk(audio, self._rate, gap=gap)
 
@@ -612,6 +643,7 @@ class KiwiSource(BaseSource):
         host = self.current
         self.session = None
         session.reason = session.reason or f"no audio for {limit:.0f} s (stalled or silent receiver)"
+        self._lost(host, session.reason)
         self._session_failed(host, session)
         self._backoff()
         self._gap = True
