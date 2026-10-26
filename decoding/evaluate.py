@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Optional
 
 from .eam_parser import parse_transcript
+from .preamble import fuse_preamble
 from .snap import snap_words
 from .vote import AGREE_THRESHOLD, SECOND_PASS_CONFIGS, apply_vote, needs_second_pass
 
@@ -31,6 +32,8 @@ _VAD_DEFAULT = {
     "speech_pad_ms": 400,
 }
 _NOSKIP = {"log_prob_threshold": None, "no_speech_threshold": None, "compression_ratio_threshold": None}
+
+_BEST = {"vad_filter": False, "condition_on_previous_text": True, "post_snap": True}
 
 CONFIGS: dict[str, dict] = {
     # Overrides are relative to the v0.1 smoke-test defaults (VAD on, see
@@ -45,6 +48,9 @@ CONFIGS: dict[str, dict] = {
         "post_snap": True,
         "post_vote": list(SECOND_PASS_CONFIGS),
     },
+    "best_pre_vote": {**_BEST, "post_preamble": "vote"},
+    "best_pre_patch": {**_BEST, "post_preamble": "patch"},
+    "best_vote_pre_patch": {**_BEST, "post_vote": list(SECOND_PASS_CONFIGS), "post_preamble": "patch"},
     "best_vote_always": {
         "vad_filter": False,
         "condition_on_previous_text": True,
@@ -274,6 +280,8 @@ def evaluate(labels: list[dict], name: str, overrides: dict, cache: Path, cached
                     others.append(best_eam(parse_transcript(postprocess(o["words"], o_post))))
                 voted = apply_vote(rec, others)
                 records = [voted] if voted else records
+        if post.get("preamble"):
+            records = [fuse_preamble(r, patch_body=post["preamble"] == "patch") for r in records]
         rows.append(score_clip(lab, records))
     agg = aggregate(rows)
     agg.update(config=name, asr_key=cfg.key(), rtf=(asr_s / audio_s) if audio_s else None, missing=missing)

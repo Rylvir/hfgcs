@@ -36,12 +36,15 @@ def vote_bodies(bodies: Sequence[str]) -> str:
     if len(bodies) < 3:
         return bodies[medoid(bodies)]
     k = medoid(bodies)
-    pivot = bodies[k]
+    return vote_on_pivot(bodies[k], bodies[:k] + bodies[k + 1 :])
+
+
+def vote_on_pivot(pivot: str, others: Sequence[str]) -> str:
+    """Vote each column of ``pivot`` with the aligned characters of ``others``
+    (the pivot itself counts once; see ``vote_bodies``)."""
     votes = [Counter({c: 1}) for c in pivot]
     gaps = [0] * len(pivot)
-    for j, b in enumerate(bodies):
-        if j == k:
-            continue
+    for b in others:
         i = 0
         for x, y in align_reads([CharObs(c) for c in pivot], [CharObs(c) for c in b]):
             if x is None:

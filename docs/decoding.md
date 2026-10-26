@@ -212,6 +212,27 @@ CPU. The cost is higher on gold because its triggered clips are the long ones. P
 unchanged, because the vote only rewrites `body`. The CPU numbers are measured ASR seconds from the cache, with all
 passes on 8 threads.
 
+**Preamble fusion (`preamble.py`, configs `best_pre_vote` / `best_pre_patch`; not on by default).**
+- The preamble is voted over every hearing: up to three pre-reads plus the first six characters of read 1 and of
+  read 2 (read starts are skipped on `mid_message_start`). Pre-reads longer than six are cut to their last six,
+  because junk such as a misheard "for" lands in front, just before "stand by". Shorter pre-reads only vote. The
+  pivot is the medoid of the six-character hearings.
+- `patch` additionally replaces the best-aligned 4–8-character start of the body with the fused preamble when it is
+  at most 2 edits away.
+
+| subset | preamble EM before → after (vote) | body CER `best` → `best_pre_patch` | body CER `best_vote` → `best_vote_pre_patch` |
+|---|---|---|---|
+| gold (8) | 0.125 → 0.125 | 0.542 → 0.550 | 0.486 → 0.494 |
+| silver (30) | 0.500 → 0.533 | 0.387 → 0.379 | 0.364 → 0.357 |
+
+This is neutral within noise: one more silver preamble right, and ±2 characters of body. It is not enabled by default.
+The reason gold does not move is systematic: on 5 of 8 gold EAMs **every** hearing has lost the same leading
+character or two (QHUDS2 → "HDS2Z", ACC6GX → "CCGX", QHJY7J → "HJET7J"; the Q/V of the QH…/VQ… prefixes is
+clipped at each onset). Voting cannot recover a character that no hearing contains. A second decode with the
+fused preamble in the prompt was not run: it needs a per-clip re-decode (about 2× CPU on the triggered clips), and
+it would at most restore one dropped onset character. A prefix prior (the eval's preambles start with QH, VQ, 56,
+WE, AC or 4S) is the cheaper next step.
+
 **Remaining failure modes:**
 - Mangled phonetic words that are too far for safe snapping: "Dory", "Big Door", "Koopalink", "Whitty", "Aloha".
 - Clips that start mid-message (no header or preamble), so only one partial read is available.
