@@ -1,0 +1,3 @@
+source,date_utc,metric,count,day_boundary,method,collected_by,url,notes
+example_counts,2031-01-01,eams,5,UTC,manual,test,,FAKE example counts for tests
+example_counts,2031-01-02,eams,2,UTC,manual,test,,FAKE example counts for tests

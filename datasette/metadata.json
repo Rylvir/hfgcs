@@ -1,0 +1,71 @@
+{
+  "title": "HFGCS message database",
+  "description_html": "<p>HFGCS EAM/Skyking captures and messages. Times are UTC. Columns follow NEET INTEL's SHORTWAVES.csv where they overlap. missileer.watch-derived rows are CC0-1.0, attribution appreciated: missileer.watch.</p>",
+  "license": "Proposal (project licence TBD)",
+  "source": "Rylvir/hfgcs",
+  "source_url": "https://github.com/Rylvir/hfgcs",
+  "databases": {
+    "hfgcs": {
+      "tables": {
+        "messages": {
+          "fts_table": "messages_fts",
+          "fts_pk": "id",
+          "searchmode": "raw",
+          "sort_desc": "heard_utc",
+          "facets": ["msg_type", "prefix", "broadcast_type", "review_status", "origin", "text_length"],
+          "label_column": "message_text",
+          "description": "One parsed message per reception (capture) or imported log row."
+        },
+        "captures": {"sort_desc": "start_utc", "facets": ["receiver_id", "frequency_khz", "classification"]},
+        "receivers": {"label_column": "code"},
+        "message_types": {"label_column": "label"},
+        "message_clusters": {"sort_desc": "last_heard_utc"},
+        "message_links": {"facets": ["link_kind", "method", "confirmed"]},
+        "external_daily_counts": {"facets": ["source", "metric"], "description": "Hand-entered daily counts (manual CSV only; nothing is fetched automatically)."},
+        "settings": {"description": "Tunables; dedup defaults are provisional until tuned on the missileer-based evaluation set."},
+        "messages_fts": {"hidden": true},
+        "messages_fts_config": {"hidden": true},
+        "messages_fts_data": {"hidden": true},
+        "messages_fts_docsize": {"hidden": true},
+        "messages_fts_idx": {"hidden": true},
+        "v_messages": {"facets": ["msg_type", "prefix", "group_no", "receiver", "frequency_khz"], "sort_desc": "heard_utc"}
+      },
+      "queries": {
+        "neet_search": {
+          "title": "NEET-style search",
+          "description": "Leave a box empty to ignore it. date: YYMMDD prefix, '-' = any digit (2601, --06, 231108). len: comma list (30 or 32,27). grp: digits (1 or 23). prefix: 2 chars. callsign: LIKE pattern (NEW DEAL, %DEAL). receiver: code. text: FTS trigram (>=3 chars). review: 'R' = not yet reviewed.",
+          "sql": "select v.heard_utc, v.callsign, v.prefix, v.message_text, v.text_length, v.group_no, v.addressee, v.msg_type, v.receiver, v.frequency_khz, v.snr_db, v.audio, v.review_status, v.id\nfrom v_messages v\nwhere (:date = '' or v.yymmdd glob replace(:date, '-', '?') || '*')\n  and (:len = '' or instr(',' || replace(:len, ' ', '') || ',', ',' || v.text_length || ',') > 0)\n  and (:grp = '' or instr(:grp, cast(v.group_no as text)) > 0)\n  and (:prefix = '' or v.prefix = upper(:prefix))\n  and (:callsign = '' or v.callsign like :callsign)\n  and (:receiver = '' or v.receiver = :receiver)\n  and (:review = '' or v.review_status in ('auto', 'needs_review'))\n  and (:text = '' or v.id in (select rowid from messages_fts where messages_fts match '\"' || replace(:text, '\"', '\"\"') || '\"'))\norder by v.heard_utc desc\nlimit 500"
+        },
+        "neet_days": {
+          "title": "NEET-style day finder (C/G match ALL listed, like the NEET galleries)",
+          "description": "Days on which every listed length (len) and every listed group digit (grp) occurs. date as in neet_search.",
+          "sql": "with d as (\n  select date_utc, yymmdd, text_length, group_no, prefix from v_messages\n  where msg_type <> 'NIL' and (:date = '' or yymmdd glob replace(:date, '-', '?') || '*')\n)\nselect date_utc, count(*) as messages, group_concat(distinct prefix) as prefixes, group_concat(distinct text_length) as lengths\nfrom d\ngroup by date_utc\nhaving (:len = '' or (select count(*) from json_each('[' || replace(:len, ' ', '') || ']') j\n                    where not exists (select 1 from d d2 where d2.date_utc = d.date_utc and d2.text_length = j.value)) = 0)\n   and (:grp = '' or (select count(*) from json_each('[' || rtrim(replace(replace(replace(replace(replace(:grp,'1','1,'),'2','2,'),'3','3,'),'4','4,'),'5','5,'), ',') || ']') g\n                    where not exists (select 1 from d d3 where d3.date_utc = d.date_utc and d3.group_no = g.value)) = 0)\norder by date_utc desc"
+        },
+        "daily_counts": {"title": "Daily counts (eams = distinct messages; eam_broadcasts per broadcast)", "sql": "select * from v_daily_counts order by date_utc desc"},
+        "link_settings": {"title": "Dedup/link settings in effect (CLI flags override)", "sql": "select key, value, description, updated_utc from settings order by key"},
+        "hour_heatmap": {
+          "title": "Hour-of-day x weekday heatmap (UTC, distinct EAMs)",
+          "sql": "select hour_utc,\n  sum(case dow when 0 then eams end) as sun, sum(case dow when 1 then eams end) as mon,\n  sum(case dow when 2 then eams end) as tue, sum(case dow when 3 then eams end) as wed,\n  sum(case dow when 4 then eams end) as thu, sum(case dow when 5 then eams end) as fri,\n  sum(case dow when 6 then eams end) as sat\nfrom v_hourly_heatmap group by hour_utc order by hour_utc"
+        },
+        "length_by_month": {"title": "EAM lengths by month", "sql": "select month, text_length, sum(messages) as messages from v_length_by_month group by month, text_length order by month desc, messages desc"},
+        "rebroadcasts": {"title": "Rebroadcast chains", "sql": "select * from v_rebroadcasts order by first_heard_utc desc limit 500"},
+        "rebroadcast_delays": {
+          "title": "Rebroadcast delay distribution (minutes after first airing)",
+          "sql": "select cast(l.delta_sec / 600 as integer) * 10 as delay_min_bucket, count(*) as links\nfrom message_links l where l.link_kind = 'rebroadcast'\ngroup by delay_min_bucket order by delay_min_bucket"
+        },
+        "prefix_activity": {"title": "Prefix activity", "sql": "select * from v_prefix_activity order by last_heard desc"},
+        "coverage_vs_external": {
+          "title": "Coverage: our distinct EAMs per day vs. hand-entered external daily counts",
+          "sql": "select * from v_coverage_comparison where (:source = '' or source = :source) order by date_utc desc"
+        },
+        "receiver_coverage": {"title": "Receiver coverage", "sql": "select * from v_receiver_coverage order by date_utc desc, receiver"},
+        "review_queue": {"title": "Review queue", "sql": "select id, heard_utc, receiver, frequency_khz, prefix, message_text, text_length, announced_length, confidence, audio from v_review_queue limit 200"},
+        "position_heatmap": {
+          "title": "Character-by-position counts for one length (structure analysis)",
+          "description": "len: message length (e.g. 30). grp: optional group digit.",
+          "sql": "with recursive pos(p) as (select 1 union all select p + 1 from pos where p < cast(:len as integer))\nselect pos.p as position, substr(v.message_text, pos.p, 1) as ch, count(*) as n\nfrom v_messages v join pos\nwhere v.msg_type = 'EAM' and v.text_length = cast(:len as integer)\n  and (:grp = '' or v.group_no = cast(:grp as integer))\n  and substr(v.message_text, pos.p, 1) not in ('.', '?')\ngroup by pos.p, ch order by pos.p, n desc"
+        }
+      }
+    }
+  }
+}
