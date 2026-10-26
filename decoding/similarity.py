@@ -1,9 +1,10 @@
 """Message-body similarity for the Database tool's rebroadcast linking.
 
-Contract (docs/database.md section 3.1 on branch db/schema-v1):
+Contract (docs/database.md sections 3.1-3.2 on branch db/schema-v1 @ bc1a204):
   text_similarity(a: str, b: str) -> float | None
   * inputs: normalised copies (upper-case, no spaces/hyphens); '.' = unreadable
-    and '?' = unknown, both wildcards; lengths may differ (v1 passes equal).
+    and '?' = unknown, both wildcards; lengths may differ (the DB passes pairs
+    with |len_a - len_b| <= link.max_len_diff, default 2).
   * returns a float in [0.0, 1.0] (1.0 = same content) or None when the pair
     cannot be compared (too few known characters).
   * pure, deterministic, no I/O or global state, fast (1e4-1e5 calls/run), and
@@ -16,7 +17,8 @@ Method ``decoding:text_similarity`` (v1):
      ``max(MIN_KNOWN_ABS, MIN_KNOWN_FRAC * max(len))`` known characters (for
      equal lengths: positions where *both* are known), mirroring the DB
      built-in's ``max(6, 0.5 * length)`` rule.
-  3. Score = the larger of
+  3. Unequal lengths: score = exactly 1 - d / max(len_a, len_b) (below).
+     Equal lengths: score = the larger of
        * wildcard Hamming: matches / positions both known (equal lengths only;
          identical to ``builtin:wildcard_hamming:v1``), and
        * wildcard edit similarity: 1 - d / max(len), where d is a banded
@@ -79,15 +81,22 @@ def wildcard_edit_distance(a: str, b: str, band: int | None = None) -> int:
     return min(prev[lb], max(la, lb))
 
 
-def text_similarity(a: str, b: str) -> float | None:
-    """Similarity in [0, 1] of two message copies, or None if not comparable."""
+def text_similarity(a: str, b: str, *, min_known: float = MIN_KNOWN_FRAC) -> float | None:
+    """Similarity in [0, 1] of two message copies, or None if not comparable.
+
+    Equal lengths: max(wildcard Hamming, edit similarity). Unequal lengths:
+    exactly ``1 - d / max(len_a, len_b)`` with ``d`` the banded wildcard edit
+    distance (spec 3.1/3.2 ruling 6). ``min_known`` (keyword-only) is the
+    fraction of the longer copy that must be known; the DB passes the default."""
     if not isinstance(a, str) or not isinstance(b, str):
         raise TypeError("text_similarity expects two str")
+    if isinstance(min_known, bool) or not isinstance(min_known, (int, float)) or not 0 <= min_known <= 1:
+        raise ValueError("min_known must be a number in [0, 1]")
     a, b = normalize(a), normalize(b)
     la, lb = len(a), len(b)
     if la == 0 or lb == 0:
         return None
-    need = max(MIN_KNOWN_ABS, MIN_KNOWN_FRAC * max(la, lb))
+    need = max(MIN_KNOWN_ABS, min_known * max(la, lb))
     if la == lb:
         matches, compared = _hamming(a, b)
         if compared < need:

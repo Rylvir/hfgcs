@@ -149,3 +149,50 @@ def test_import_is_lightweight():
     )
     out = subprocess.run([sys.executable, "-c", code], cwd=root, capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "[]"
+
+
+# ---- spec 3.2 ruling 6: unequal lengths score exactly 1 - d / max(len)
+def test_unequal_length_exact_formula_diff_1_and_2():
+    from decoding.similarity import text_similarity, wildcard_edit_distance
+
+    base = "QKR4TZ7HAB2CD3EF4GH5JK6LM7NP8Q"  # 30
+    cases = [
+        (base, base[:-1], 1),  # dropped trailing char: 29 vs 30
+        (base, base[:10] + base[11:], 1),  # dropped inside
+        (base, base[:5] + "X" + base[5:], 1),  # inserted: 31 vs 30
+        (base, base[:10] + base[12:], 2),  # two dropped: 28 vs 30
+        (base, base[:3] + "Z" + base[4:20] + base[22:], 3),  # 1 sub + 2 drops
+        (base, "Y" + base + "Y", 2),  # 32 vs 30
+    ]
+    for a, b, d in cases:
+        assert wildcard_edit_distance(a, b, 8) == d
+        assert text_similarity(a, b) == 1 - d / max(len(a), len(b))
+        assert text_similarity(b, a) == text_similarity(a, b)
+    assert round(text_similarity(base, base[:-1]), 3) == 0.967  # spec example
+
+
+def test_unequal_length_wildcards_free_and_normalised_first():
+    from decoding.similarity import text_similarity
+
+    a = "QKR4TZ7HAB2CD3EF4GH5JK6LM7NP8Q"
+    b = "QKR4TZ7H.B2CD3EF4GH5JK6LM7NP8"  # wildcard + dropped last char
+    assert text_similarity(a, b) == 1 - 1 / 30
+    assert text_similarity(a, " qkr4-tz7h.b2cd3ef4gh5jk6lm7np8\t") == 1 - 1 / 30
+    c = "QKR4TZ7HAB2CD3EF4GH5JK6LM7NP"  # 28
+    assert text_similarity(a, "QKR4TZ7HAB2CD3EF4GH5JK6LM7NP?") == 1 - 1 / 30  # ? = 8, Q dropped
+    assert text_similarity(a, c) == 1 - 2 / 30
+
+
+def test_min_known_keyword_only():
+    import pytest
+
+    from decoding.similarity import text_similarity
+
+    a, b = "ABCDEFGHIJKL", "ABCDEF......"
+    assert text_similarity(a, b) == 1.0  # 6 known of 12 = 0.5: comparable
+    assert text_similarity(a, b, min_known=0.6) is None
+    assert text_similarity(a, b, min_known=0.0) == 1.0
+    with pytest.raises(TypeError):
+        text_similarity(a, b, 0.6)  # positional not allowed
+    with pytest.raises(ValueError):
+        text_similarity(a, b, min_known=1.5)
