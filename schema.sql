@@ -34,8 +34,9 @@ INSERT OR IGNORE INTO settings(key, value, description) VALUES
  ('link.simulcast_sec', '120',  'max |dt| (s) for two copies to be the same emission (simulcast)'),
  ('link.window_hours',  '48',   'max dt (h) for a later copy to be linked as a rebroadcast'),
  ('link.threshold',     '0.90', 'min text similarity (0..1) to link two copies'),
- ('link.min_known',     '0.5',  'min fraction of positions known in both copies (built-in similarity)'),
- ('link.similarity',    'auto', 'auto = decoding.similarity.text_similarity if importable, else builtin; or builtin / decoding');
+ ('link.min_known',     '0.5',  'min fraction of positions known in both copies (builtin only; decoding fixes 0.5 in code)'),
+ ('link.similarity',    'auto', 'auto = decoding.similarity.text_similarity if importable, else builtin; or builtin / decoding'),
+ ('link.max_len_diff',  '2',    'max length difference compared (decoding similarity only; builtin compares equal lengths)');
 
 -- ---------------------------------------------------------------------------
 -- Message type taxonomy (lookup table, enforced by FK from messages.msg_type).

@@ -209,7 +209,8 @@ def cmd_ingest_catalog(args) -> int:
 # ------------------------------------------------------------------ dedup/link
 # Built-in defaults; the `settings` table overrides them and CLI flags override both.
 LINK_DEFAULTS = {"link.simulcast_sec": 120.0, "link.window_hours": 48.0,
-                 "link.threshold": 0.90, "link.min_known": 0.5, "link.similarity": "auto"}
+                 "link.threshold": 0.90, "link.min_known": 0.5, "link.similarity": "auto",
+                 "link.max_len_diff": 2}
 BUILTIN_METHOD = "builtin:wildcard_hamming:v1"
 DECODING_METHOD = "decoding:text_similarity"
 
@@ -250,10 +251,11 @@ def resolve_similarity(mode: str, min_known: float):
     built-in; 'decoding' requires it; 'builtin' never imports it. Expected interface:
 
         text_similarity(a: str, b: str) -> float | None
-          a, b : normalised copies (upper-case, no spaces/hyphens); '.' and '?' are
-                 wildcards (unreadable / unknown); lengths may differ
+          a, b : str, normalised copies (upper-case, no spaces/tabs/hyphens); '.' and
+                 '?' are wildcards; lengths may differ by up to link.max_len_diff
           returns a float in [0.0, 1.0] (1.0 = same content), or None when the two
-                 copies cannot be compared; pure, deterministic, no I/O
+                 copies cannot be compared; raises TypeError on non-str (a caller bug);
+                 pure, deterministic, no I/O. See docs/database.md section 3.1.
     """
     if mode not in ("auto", "builtin", "decoding"):
         raise ValueError(f"unknown similarity mode {mode!r}")
@@ -298,8 +300,11 @@ class DSU:
 
 
 def consensus(texts: list[str]) -> str:
+    """Per-position majority over the copies of the modal length (ties -> longer)."""
+    lengths = Counter(len(t) for t in texts)
+    modal = max(lengths, key=lambda n: (lengths[n], n))
     out = []
-    for chars in zip(*texts):
+    for chars in zip(*[t for t in texts if len(t) == modal]):
         known = [c for c in chars if c not in WILDCARDS]
         out.append(Counter(known).most_common(1)[0][0] if known else ".")
     return "".join(out)
@@ -310,12 +315,15 @@ def cmd_link(args) -> int:
     cfg = load_settings(con)
     for flag, key in (("simulcast_sec", "link.simulcast_sec"), ("window_hours", "link.window_hours"),
                       ("threshold", "link.threshold"), ("min_known", "link.min_known"),
-                      ("similarity", "link.similarity")):
+                      ("similarity", "link.similarity"), ("max_len_diff", "link.max_len_diff")):
         if getattr(args, flag) is not None:
             cfg[key] = getattr(args, flag)
     sim, method = resolve_similarity(cfg["link.similarity"], cfg["link.min_known"])
     simulcast_sec, window_s, threshold = (cfg["link.simulcast_sec"], cfg["link.window_hours"] * 3600,
                                           cfg["link.threshold"])
+    # unequal lengths are only compared by a method that scores them (Decoding's);
+    # the built-in Hamming score is defined for equal lengths only
+    max_len_diff = int(cfg["link.max_len_diff"]) if method == DECODING_METHOD else 0
     rows = con.execute(
         """SELECT id, heard_utc, text_norm, prefix, receiver_id, frequency_khz,
                   (julianday(heard_utc) - 2440587.5) * 86400.0 AS t
@@ -323,25 +331,24 @@ def cmd_link(args) -> int:
            WHERE msg_type IN ('EAM','SKYKING') AND review_status <> 'rejected'
              AND text_norm NOT IN ('', '_', '%')
            ORDER BY heard_utc, id""").fetchall()
-    by_len = defaultdict(list)
-    for r in rows:
-        by_len[len(r["text_norm"])].append(r)
     links = []
-    for bucket in by_len.values():
-        j0 = 0
-        for i, a in enumerate(bucket):
-            while bucket[j0]["t"] < a["t"] - window_s:
-                j0 += 1
-            for b in bucket[j0:i]:
-                if a["prefix"] and b["prefix"] and "?" not in a["prefix"] + b["prefix"] \
-                        and a["prefix"] != b["prefix"]:
-                    continue
-                s = sim(b["text_norm"], a["text_norm"])
-                if s is None or s < threshold:
-                    continue
-                d = a["t"] - b["t"]
-                kind = "simulcast" if d <= simulcast_sec else "rebroadcast"
-                links.append((b["id"], a["id"], kind, round(d, 1), round(s, 4)))
+    j0 = 0
+    for i, a in enumerate(rows):            # rows are in time order; b is always the earlier copy
+        while rows[j0]["t"] < a["t"] - window_s:
+            j0 += 1
+        la = len(a["text_norm"])
+        for b in rows[j0:i]:
+            if abs(len(b["text_norm"]) - la) > max_len_diff:
+                continue
+            if a["prefix"] and b["prefix"] and "?" not in a["prefix"] + b["prefix"] \
+                    and a["prefix"] != b["prefix"]:
+                continue
+            s = sim(b["text_norm"], a["text_norm"])
+            if s is None or s < threshold:
+                continue
+            d = a["t"] - b["t"]
+            kind = "simulcast" if d <= simulcast_sec else "rebroadcast"
+            links.append((b["id"], a["id"], kind, round(d, 1), round(s, 4)))
     # all similarity calls are done before any write, so a failing similarity
     # function leaves the DB untouched. Only our own unconfirmed links are rebuilt;
     # source-asserted ('external:*') and human-confirmed links are kept.
@@ -368,18 +375,19 @@ def cmd_link(args) -> int:
             continue
         ids.sort(key=lambda i: (info[i]["heard_utc"], i))
         texts = [info[i]["text_norm"] for i in ids]
+        canon = consensus(texts)
         airings = len({sim_dsu.find(i) for i in ids})
         cur = con.execute(
             """INSERT INTO message_clusters(canonical_text, prefix, length, first_heard_utc,
                    last_heard_utc, n_messages, n_airings) VALUES (?,?,?,?,?,?,?)""",
-            (consensus(texts), info[ids[0]]["prefix"], len(texts[0]),
+            (canon, info[ids[0]]["prefix"], len(canon),
              info[ids[0]]["heard_utc"], info[ids[-1]]["heard_utc"], len(ids), airings))
         con.executemany("UPDATE messages SET cluster_id = ? WHERE id = ?",
                         [(cur.lastrowid, i) for i in ids])
     con.commit()
     kinds = Counter(l[2] for l in links)
     ncl = con.execute("SELECT count(*) FROM message_clusters").fetchone()[0]
-    print(f"compared {len(rows)} messages with {method} (simulcast<={simulcast_sec:g}s, "
+    print(f"compared {len(rows)} messages with {method} (max_len_diff {max_len_diff}, simulcast<={simulcast_sec:g}s, "
           f"window {window_s / 3600:g}h, threshold {threshold:g}): {len(links)} links {dict(kinds)}, "
           f"{ncl} clusters")
     return 0
@@ -655,6 +663,8 @@ def main(argv=None) -> int:
     s.add_argument("--window-hours", type=float, help="default 48 (settings: link.window_hours)")
     s.add_argument("--threshold", type=float, help="default 0.90 (settings: link.threshold)")
     s.add_argument("--min-known", type=float, help="default 0.5 (settings: link.min_known)")
+    s.add_argument("--max-len-diff", type=int,
+                   help="default 2 (settings: link.max_len_diff); used only with the decoding similarity")
     s.add_argument("--similarity", choices=["auto", "builtin", "decoding"],
                    help="default auto (settings: link.similarity)")
     s.set_defaults(fn=cmd_link)

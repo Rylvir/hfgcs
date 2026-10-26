@@ -2,6 +2,7 @@
     python3 -m unittest discover -s tests -v
 """
 import contextlib
+import importlib.util
 import io
 import sqlite3
 import sys
@@ -123,6 +124,59 @@ class DbTest(unittest.TestCase):
                     sys.modules.pop(k, None)
                 else:
                     sys.modules[k] = v
+
+    def _add_short_copy(self):
+        # a copy with one character dropped (29 chars), 1 h after the first airing
+        self.con.execute("""INSERT INTO messages(heard_utc, msg_type, callsign, prefix, message_text, length)
+                            VALUES ('2031-01-01T01:05:00Z', 'EAM', 'TESTCALL', 'ZZ',
+                                    'ZZTESTCCCCCCCCCCCCCCCCCCCCCCC', 29)""")
+        self.con.commit()
+
+    def test_unequal_lengths_only_with_decoding_similarity(self):
+        import types
+        self.load_fake_pipeline()
+        self._add_short_copy()
+        run("--db", self.db, "link", "--similarity", "builtin")      # builtin: equal lengths only
+        self.assertEqual(self.q("SELECT n_messages FROM message_clusters"), [(3,)])
+        pkg = types.ModuleType("decoding"); pkg.__path__ = []
+        mod = types.ModuleType("decoding.similarity")
+        mod.text_similarity = lambda a, b: 1.0 - abs(len(a) - len(b)) / max(len(a), len(b)) \
+            if a[:6] == b[:6] else 0.0
+        saved = {k: sys.modules.get(k) for k in ("decoding", "decoding.similarity")}
+        try:
+            sys.modules["decoding"], sys.modules["decoding.similarity"] = pkg, mod
+            run("--db", self.db, "link", "--similarity", "decoding")
+            self.assertEqual(self.q("SELECT n_messages, length, canonical_text FROM message_clusters"),
+                             [(4, 30, "ZZTESTCCCCCCCCCCCCCCCCCCCCCCCC")])   # modal-length consensus
+            run("--db", self.db, "link", "--similarity", "decoding", "--max-len-diff", "0")
+            self.assertEqual(self.q("SELECT n_messages FROM message_clusters"), [(3,)])
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    sys.modules.pop(k, None)
+                else:
+                    sys.modules[k] = v
+
+    @unittest.skipUnless(importlib.util.find_spec("decoding") is not None
+                         and importlib.util.find_spec("decoding.similarity") is not None,
+                         "Decoding's decoding.similarity is not on the path")
+    def test_real_decoding_similarity(self):
+        from decoding.similarity import text_similarity
+        self.assertEqual(text_similarity("ZZTEST.CCC", "ZZTESTCCCC"), 1.0)
+        with self.assertRaises(TypeError):
+            text_similarity(None, "ZZTESTCCCC")
+        self.load_fake_pipeline()
+        self._add_short_copy()
+        rc, out = run("--db", self.db, "link", "--similarity", "decoding")
+        self.assertIn("decoding:text_similarity", out)
+        self.assertEqual(dict(self.q("SELECT link_kind, count(*) FROM message_links GROUP BY 1")),
+                         {"simulcast": 1, "rebroadcast": 5})
+        self.assertEqual(self.q("SELECT n_messages, n_airings FROM message_clusters"), [(4, 3)])
+        # on equal lengths the outcome matches the built-in
+        run("--db", self.db, "link", "--similarity", "decoding", "--max-len-diff", "0")
+        dec = self.q("SELECT message_a, message_b, link_kind FROM message_links ORDER BY 1, 2")
+        run("--db", self.db, "link", "--similarity", "builtin")
+        self.assertEqual(dec, self.q("SELECT message_a, message_b, link_kind FROM message_links ORDER BY 1, 2"))
 
     def test_neet_round_trip_exact(self):
         src = FIX / "neet_format_fake.csv"

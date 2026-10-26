@@ -49,13 +49,15 @@ In the repo (commit `55fe420`), `hfgcs_scanner.py` writes `recordings/HFGCS_<kHz
 ## 3. Dedup / rebroadcast algorithm (`hfgcs_db.py link`)
 1. **Candidates:** EAM and Skyking rows that are not rejected and have a real body (not `_` or `%`).
 2. **Normalize:** `text_norm` = upper-case with spaces, tabs and hyphens removed. `.` and `?` are wildcards.
-3. **Blocking:** compare only rows of the same normalized length, within the rebroadcast window. Prefixes must agree when both are known.
+3. **Blocking:** compare rows within the rebroadcast window whose normalized lengths differ by at most `max_len_diff`. Prefixes must agree when both are known.
+   - The default `max_len_diff` is 2, and it applies only with Decoding's similarity.
+   - The built-in is defined for equal lengths only, so with it the effective value is 0.
 4. **Similarity:** `decoding.similarity.text_similarity` if it can be imported (§3.1); otherwise the built-in `builtin:wildcard_hamming:v1`.
    - The built-in computes matches ÷ positions where both characters are known.
    - It needs at least `max(6, min_known × length)` known positions, or the pair is not compared.
    - A link is made when similarity ≥ `threshold`.
 5. **Kind:** Δt ≤ `simulcast_sec` is a `simulcast` (the same emission on another receiver or frequency). A later copy within `window_hours` is a `rebroadcast`.
-6. **Clusters:** union-find over all links, then per-position majority vote for `canonical_text`. `n_airings` counts simulcast-connected components.
+6. **Clusters:** union-find over all links, then per-position majority vote for `canonical_text`, taken over the copies of the most common length (ties go to the longer). The cluster's `length` is that of `canonical_text`. `n_airings` counts simulcast-connected components.
 7. **Reruns:** every similarity is computed before anything is written, so a failing similarity function leaves the DB unchanged. Only our own unconfirmed links (`builtin:*`, `decoding:*`) are rebuilt. Human-confirmed links and source-asserted links (`external:missileer`) are kept.
 
 **Settings.** Precedence is CLI flag > `settings` table > built-in default.
@@ -65,23 +67,57 @@ In the repo (commit `55fe420`), `hfgcs_scanner.py` writes `recordings/HFGCS_<kHz
 | `link.simulcast_sec` | 120 | `--simulcast-sec` |
 | `link.window_hours` | 48 | `--window-hours` |
 | `link.threshold` | 0.90 | `--threshold` |
-| `link.min_known` | 0.5 | `--min-known` |
+| `link.min_known` | 0.5 | `--min-known` (built-in only; Decoding's function fixes 0.5) |
 | `link.similarity` | `auto` | `--similarity auto\|builtin\|decoding` |
+| `link.max_len_diff` | 2 | `--max-len-diff` (Decoding's similarity only) |
 
 - View settings with `hfgcs_db.py settings`; change one with `hfgcs_db.py settings link.threshold 0.92`. They are also visible in Datasette (`link_settings`).
 - **These defaults are provisional.** They will be tuned against missileer.watch data (co-receptions, rebroadcast links and listener corrections are ground truth) once Decoding has an evaluation set. Each change will be recorded here with its precision and recall.
 
-### 3.1 Interface expected from Decoding
+### 3.1 Interface expected from Decoding (implemented: `decoding-design` @ `38b8627`)
 ```python
 # decoding/similarity.py
 def text_similarity(a: str, b: str) -> float | None: ...
 ```
-- **Inputs:** two normalized copies (upper-case; no spaces or hyphens). `.` means unreadable and `?` means unknown; both are wildcards. Lengths may differ, although v1 only passes equal lengths.
-- **Returns:** a `float` in **[0.0, 1.0]**, where 1.0 means the same content. Return `None` when the pair cannot be compared (for example, too few known characters).
+- **Inputs:** two `str` copies, already normalized by us (upper-case, no spaces, tabs or hyphens). `.` means unreadable and `?` means unknown; both are wildcards.
+  - Lengths may differ by up to `link.max_len_diff` (default 2).
+  - The function may normalize again in the same way; this must be idempotent.
+- **Returns:** a `float` in **[0.0, 1.0]**, where 1.0 means the same content. Return `None` when the pair cannot be compared because too few characters are known (Decoding fixes the minimum at `max(6, 0.5 × longer length)`).
   - The DB tool applies the threshold itself.
   - A value outside [0, 1] raises an error, and the run aborts without writing anything.
-- **Contract:** pure and deterministic, with no I/O or global state, and fast (it is called on the order of 10⁴–10⁵ times per run). Importing it must not pull in heavy dependencies such as the ASR stack.
-- **Selection:** with `--similarity auto` (the default), the tool uses this function when it is importable from the repo root and otherwise falls back to the built-in. `decoding` makes the function mandatory; `builtin` never imports it. Links record which method made them: `decoding:text_similarity` or `builtin:wildcard_hamming:v1`.
+- **Non-`str` input:** raises `TypeError`. That would be a caller bug, so it aborts the run, which leaves the DB unchanged.
+- **Equal lengths:** the score must never fall below the built-in wildcard Hamming score, and it equals it when there are only substitutions.
+- **Unequal lengths:** `1 − d / max(len_a, len_b)`, where `d` is the wildcard-aware edit distance.
+  - Normalizing by the longer copy means a dropped or inserted character costs about 1/length (29 vs 30 characters scores 0.967 and links).
+  - A truncated copy scores low (20 of 30 characters gives 0.67) and is not merged. A future `partial` link kind covers truncated copies.
+- **Edit distance:** banded at |Δlen| + 8. A banded result can only overestimate the distance, so it can miss a link but never create one.
+- **Contract:** pure and deterministic, with no I/O or global state, and fast (on the order of 10⁴–10⁵ calls per run). Importing it must not pull in heavy dependencies such as the ASR stack.
+- **Selection:** with `--similarity auto` (the default), the tool uses this function when it is importable (from the repo root or `PYTHONPATH`) and otherwise falls back to the built-in. `decoding` makes the function mandatory; `builtin` never imports it. Links record which method made them: `decoding:text_similarity` or `builtin:wildcard_hamming:v1`.
+
+### 3.2 Review of Decoding's implementation (2026-10-26)
+| # | Point | Ruling |
+|---|---|---|
+| 1 | `TypeError` on non-`str` | **Accept.** `None` means "data not comparable"; a wrong type is a programming error and should fail loudly. Our tool always passes `str`, and a failed run writes nothing. |
+| 2 | Minimum of 0.5 known characters fixed in code | **Accept for v1.** It keeps the two-argument contract and matches our default. `link.min_known` governs the built-in only. If tuning needs another value, Decoding adds a keyword-only `min_known=0.5` and we pass the setting through. |
+| 3 | Score can exceed the built-in at 0.90 | **Accept, no threshold change.** On equal lengths the link outcome was identical on NEET + missileer data (1,254 vs 1,254 links, same pairs). The higher scores come only from shifted copies, which are true duplicates. In 20,000 random same-prefix base32 pairs the best score was 0.33. |
+| 4 | Edit band = 8 | **Accept.** The band only adds to \|Δlen\|, and banding can only lower a score. A 292-character copy with 20 deletions still scored 0.93. |
+| 5 | Normalizing away tabs | **Yes.** Our `text_norm` already strips spaces, tabs and hyphens, and doing it again in the function is idempotent and harmless. |
+| 6 | Unequal lengths | **Allow \|Δlen\| ≤ 2 (`link.max_len_diff`), scored as `1 − d/max(len)`, with Decoding's function only.** The built-in stays equal-length. A tolerance of 2 catches ASR or transcription drops and insertions without merging truncated copies or different declared lengths. |
+
+**Measured on NEET sample + missileer archive (2,136 candidate rows), with links made by the tool (excluding the 7 `external:missileer` links):**
+
+| Run | Links | Simulcast | Rebroadcast | Clusters |
+|---|---|---|---|---|
+| builtin | 1,254 | 15 | 1,246 | 344 |
+| decoding, `--max-len-diff 0` | 1,254 (identical pairs) | 15 | 1,246 | 344 |
+| decoding, default `max_len_diff` 2 | 1,257 (+3, 0 lost) | 16 | 1,248 | 347 |
+
+The kind columns include the 7 external links. All 3 extra links are true duplicates:
+- a 29-character vs a 30-character NEET copy (a dropped trailing `X`)
+- a NEET copy with one character dropped plus one substitution
+- a missileer co-reception at the same second, 32 vs 30 characters
+
+Runtime: builtin 0.2 s, decoding 1.5 s.
 
 **Validation on NEET INTEL's 1,913-row 2023 sample** (local clone; not committed):
 - These figures come from the built-in at the default settings.
