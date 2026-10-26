@@ -9,7 +9,8 @@ import sys
 import time
 
 import numpy as np
-import websockets
+
+from hfgcs.config import HFGCS_CHANNELS
 
 # OpenWebRX IMA-ADPCM tables (htdocs/lib/AudioEngine.js). Each FFT frame
 # resets the codec and discards COMPRESS_FFT_PAD_N leading samples.
@@ -28,13 +29,8 @@ IMA_STEP = [
 FFT_PAD = 10
 
 # Names as shown by this receiver. OpenWebRX sends "sdr_id|profile_id".
-HFGCS_PROFILES = [
-    ("HFGCS 4724", 4_724_000),
-    ("HFGCS 6739", 6_739_000),
-    ("HFGCS 8992", 8_992_000),
-    ("HFGCS 11175", 11_175_000),
-    ("HFGCS 15016", 15_016_000),
-]
+# The channel list comes from the shared config (all six HFGCS channels).
+HFGCS_PROFILES = [(ch.profile_name, int(ch.dial_hz)) for ch in HFGCS_CHANNELS]
 
 # OpenWebRX bans clients that switch profiles faster than about 10 seconds.
 PROFILE_GAP_SECONDS = 11.0
@@ -157,6 +153,8 @@ def _take(message, state):
 
 
 async def survey(http_url: str):
+    import websockets  # optional extra: pip install .[openwebrx]
+
     url = ws_url(http_url)
     origin = http_url if "://" in http_url else "http://127.0.0.1:8073"
     print(f"Connecting to {url}")
@@ -199,7 +197,8 @@ async def survey(http_url: str):
                 None,
             )
             if profile_id is None:
-                results.append({"name": name, "error": "profile not advertised"})
+                # Not fatal: a receiver need not carry every channel.
+                results.append({"name": name, "skipped": "profile not advertised"})
                 print(f"{name}: profile not advertised")
                 continue
             gap_deadline = last_switch + PROFILE_GAP_SECONDS
@@ -275,9 +274,10 @@ def main(argv=None):
         print(f"Waterfall test failed: {exc}", file=sys.stderr)
         return 1
     failed = [row for row in results if row.get("error")]
-    if failed or not results:
+    measured = [row for row in results if not row.get("error") and not row.get("skipped")]
+    if failed or not measured:
         return 1
-    print(f"Waterfall test collected {len(results)} HFGCS profiles")
+    print(f"Waterfall test collected {len(measured)} HFGCS profiles")
     return 0
 
 

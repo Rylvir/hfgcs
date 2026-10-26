@@ -39,9 +39,10 @@ Python + SoapySDR scanner for Airspy HF+ Discovery focused on HFGCS voice (EAM) 
 4. Python deps:
    ```bash
    python3 -m venv --system-site-packages .venv
-   .venv/bin/pip install -r requirements.txt
+   .venv/bin/pip install -e ".[openwebrx]"     # or: -r requirements.txt
    sudo apt install python3-soapysdr
    ```
+   Developers: `.venv/bin/pip install -e ".[dev]" && .venv/bin/pytest` (no SDR needed).
    On this machine the Airspy HF+ libraries and SoapyAirspyHF module are already installed. `python3-soapysdr` is not in the system Python path, so the project venv carries a copy of that module extracted from the Ubuntu package.
 
 5. Initial device check (releases the radio when it finishes):
@@ -62,6 +63,29 @@ Python + SoapySDR scanner for Airspy HF+ Discovery focused on HFGCS voice (EAM) 
    ```bash
    .venv/bin/python hfgcs_scanner.py
    ```
+
+## Configuration and output
+All tools share `hfgcs/config.py`: the six HFGCS channels (4724, 6739, 8992,
+11175, 13200, 15016 kHz), receiver ID, squelch, hang time, pre-roll and AGC.
+Override any value with a TOML file: `hfgcs_scanner.py --config config.toml`
+(see `config.example.toml`).
+
+Each recording is a 16-bit WAV in `recordings/` plus one JSON line in
+`hfgcs_catalog.jsonl` with `start_utc` (activity onset, UTC ISO 8601),
+`file_start_utc`, `end_utc`, `frequency_khz`, `receiver_id`, `snr_db_peak`,
+`snr_db_mean`, `noise_floor_db`, `preroll_sec`, `duration_sec`, `sha256`.
+
+## DSP notes
+- USB demodulation is Weaver-style: mix the passband centre to 0 Hz, complex
+  elliptic low-pass (the sideband filter), decimate 192 k -> 8 k, mix back up.
+  Tones keep their frequency and the opposite sideband is rejected by > 80 dB.
+- Mixer phase, filter memory and decimator phase persist across blocks; one
+  attack/decay AGC replaces per-block normalisation.
+- The squelch measures the 3 kHz voice slot, opens after `min_activity_seconds`,
+  stays open until the signal has been below the close level for
+  `hang_seconds`, and freezes its noise floor while open. The audio from the
+  activity window and `preroll_seconds` before it are kept.
+- Tuner AGC is off by default (`tuner_agc`) so dB thresholds are stable.
 
 ## Next improvements (easy to add)
 - Better USB demod (liquid-dsp or more precise filter)
