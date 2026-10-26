@@ -20,6 +20,7 @@ from typing import Optional
 
 from .eam_parser import parse_transcript
 from .snap import snap_words
+from .vote import AGREE_THRESHOLD, SECOND_PASS_CONFIGS, apply_vote, needs_second_pass
 
 # ---------------------------------------------------------------- configs
 # Each entry: AsrConfig overrides + post-processing switches.
@@ -37,6 +38,20 @@ CONFIGS: dict[str, dict] = {
     "baseline": {},  # v0.1 defaults from the first smoke test
     # = AsrConfig() + snap_words
     "best": {"vad_filter": False, "condition_on_previous_text": True, "post_snap": True},
+    # best + optional second pass: 3-way character vote on low-agreement EAMs
+    "best_vote": {
+        "vad_filter": False,
+        "condition_on_previous_text": True,
+        "post_snap": True,
+        "post_vote": list(SECOND_PASS_CONFIGS),
+    },
+    "best_vote_always": {
+        "vad_filter": False,
+        "condition_on_previous_text": True,
+        "post_snap": True,
+        "post_vote": list(SECOND_PASS_CONFIGS),
+        "post_vote_threshold": 1.01,
+    },
     # prompt / hotwords
     "no_prompt": {"prompt": None},
     "no_prompt_no_hot": {"prompt": None, "hotwords": False},
@@ -236,7 +251,8 @@ def evaluate(labels: list[dict], name: str, overrides: dict, cache: Path, cached
     cfg, post = split_config(overrides)
     tr = Transcriber(cfg)
     rows, asr_s, audio_s = [], 0.0, 0.0
-    missing = 0
+    missing = fired = 0
+    second: dict = {}
     for lab in labels:
         if cached_only and not (cache / cfg.key() / (lab["source_id"] + ".json")).exists():
             missing += 1
@@ -244,9 +260,24 @@ def evaluate(labels: list[dict], name: str, overrides: dict, cache: Path, cached
         r = transcribe_cached(tr, lab, cache)
         asr_s += r.get("asr_seconds", 0)
         audio_s += r.get("duration_s", 0)
-        rows.append(score_clip(lab, parse_transcript(postprocess(r["words"], post))))
+        records = parse_transcript(postprocess(r["words"], post))
+        if post.get("vote"):
+            rec = best_eam(records)
+            if needs_second_pass(rec, post.get("vote_threshold", AGREE_THRESHOLD)):
+                fired += 1
+                others = []
+                for other in post["vote"]:
+                    o_cfg, o_post = split_config(CONFIGS[other])
+                    o_tr = second.setdefault(other, Transcriber(o_cfg))
+                    o = transcribe_cached(o_tr, lab, cache)
+                    asr_s += o.get("asr_seconds", 0)
+                    others.append(best_eam(parse_transcript(postprocess(o["words"], o_post))))
+                voted = apply_vote(rec, others)
+                records = [voted] if voted else records
+        rows.append(score_clip(lab, records))
     agg = aggregate(rows)
     agg.update(config=name, asr_key=cfg.key(), rtf=(asr_s / audio_s) if audio_s else None, missing=missing)
+    agg["second_pass_fired"] = fired if post.get("vote") else None
     return {"summary": agg, "rows": rows}
 
 
@@ -288,6 +319,8 @@ def main(argv=None) -> int:
             print(f"<!-- {name}: {res['summary']['missing']} clips not cached, skipped -->")
         results[name] = res
         print(fmt_row(res["summary"]), flush=True)
+        if res["summary"].get("second_pass_fired") is not None:
+            print(f"<!-- {name}: second pass fired on {res['summary']['second_pass_fired']} clips -->")
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(json.dumps(results, indent=1))

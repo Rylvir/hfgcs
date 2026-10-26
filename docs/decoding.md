@@ -193,9 +193,24 @@ evaluate process is about 1.7 GB. `vad_t10_pad` was stopped at 10/14 gold clips 
 **What did not help:** chunked decoding with our own VAD windows (0.91), `noskip` (all skip guards off: 0.566 without VAD), dropping `hallucination_silence_threshold` (0.839, loops return), the closed-vocabulary
 `suppress_tokens` whitelist (0.631: it forces garbage words into letters), and `afftdn` denoise (0.627).
 
-**Lead, not adopted:** a 3-way character vote over the no-VAD, cond-prev and noskip transcripts (aligned to one pivot
-with `align.py`) gave 0.474 on gold. That costs 3× CPU (RTF about 0.5) and was not checked on silver. It is the
-next thing to try, together with simulcast fusion (§2), which gives the same vote across receivers for free.
+**Optional second pass: 3-way character vote (`vote.py`, config `best_vote`; default stays single pass).**
+- *Trigger* (`vote.needs_second_pass`): the first-pass EAM's `confidence.reads_agree_ratio < 0.3`, which includes
+  every single-read EAM. Clips with no EAM body (radio checks, noise) never trigger. Structural flags were tried as
+  the trigger, but `single_read`/`length_mismatch` are on about 85 % of current first passes, so they select nothing.
+- *Second pass*: decode again with `no_vad_snap` and `baseline` (VAD on, cheap). Each body is aligned to the
+  medoid of the three (ties go to pass 1) with `align.py` and voted per column. A column is dropped when most passes
+  have a gap there, and insertions relative to the medoid are ignored. The record keeps `body_first_pass` and gets
+  the flag `second_pass_vote`.
+
+| subset | single pass (`best`) | `best_vote` (gated) | vote on every EAM | fired | RTF single → gated (cost) |
+|---|---|---|---|---|---|
+| gold (8 EAMs, 14 clips) | 0.542 | **0.486** | 0.486 | 5 of 8 EAMs, 0 of 6 negatives | 0.196 → 0.347 (1.77×) |
+| silver (30 EAMs) | 0.387 | **0.364** | 0.354 | 10 of 30 | 0.132 → 0.178 (1.35×) |
+
+Gated voting gets all of the always-vote gain on gold and about 70 % of it on silver, at about a third of the extra
+CPU. The cost is higher on gold because its triggered clips are the long ones. Preamble and length exact-match are
+unchanged, because the vote only rewrites `body`. The CPU numbers are measured ASR seconds from the cache, with all
+passes on 8 threads.
 
 **Remaining failure modes:**
 - Mangled phonetic words that are too far for safe snapping: "Dory", "Big Door", "Koopalink", "Whitty", "Aloha".
