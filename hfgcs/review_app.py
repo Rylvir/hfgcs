@@ -220,6 +220,9 @@ def render_message(m: dict, *, csrf: str, types, editor: str, cf_editor: Optiona
 <div class=wide><label>Transcript <textarea name=transcript rows=4>
 {esc(m['transcript'])}</textarea></label></div>
 {f"<div class=ro>machine copy: <code>{esc(m['machine_text'])}</code></div>" if m['machine_text'] else ''}
+{f"<div class=ro>newer machine decode ({esc(m['decoder_version'])}), not applied over your edits: "
+ f"<code>{esc(m['pending_machine_text'])}</code></div>"
+ if m['pending_machine_text'] and m['pending_machine_text'] != m['message_text'] else ''}
 <div class=wide><label>Notes <textarea name=notes rows=2>{esc(m['review_notes'])}</textarea></label></div>
 <div class=actions><label><input type=checkbox name=checked value=1{' checked' if m['checked'] else ''}>
  Checked: transcript and fields are correct (gold)</label>{who}<button type=submit>Save</button>
@@ -279,7 +282,8 @@ def render_list(con: sqlite3.Connection, q: dict, *, csrf: str, editor: str, cf_
         out.append(f"""<article class=rec id='c{r['id']}'><div class=rec-head>
 <b>{esc(r['start_utc'][11:19])} UTC</b><span>{_fmt(r['frequency_khz'], 1)} kHz {esc(r['mode'])}</span>
 <span>{esc(r['receiver'])}</span><span>{_fmt(r['duration_sec'], 1, ' s')}</span>
-<span>SNR {_fmt(r['snr_db'], 1, ' dB')}</span><span>capture #{r['id']}</span></div>
+<span>SNR {_fmt(r['snr_db'], 1, ' dB')} mean / {_fmt(r['snr_peak_db'], 1, ' dB')} peak</span>
+<span>capture #{r['id']}</span></div>
 <div class=rec-body><div class=player>{player}</div><div class=msgs>{msgs}</div></div></article>""")
     if not recs:
         out.append("<p>No recordings match.</p>")

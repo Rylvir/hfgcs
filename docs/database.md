@@ -10,6 +10,7 @@ In the repo (commit `55fe420`), `hfgcs_scanner.py` writes `recordings/HFGCS_<kHz
 - The scanner records no SNR, receiver ID, transcript or parsed fields yet. The schema has columns ready for them.
 - **Update (recorder schema 2, `hfgcs/capture.py` on main):** each catalog line now carries `start_utc` (activity onset), `file_start_utc` (start of pre-roll), `end_utc`, `frequency_khz`, `mode`, `receiver_id`, `file` (`HFGCS_<kHz>kHz_<YYYYmmddTHHMMSSZ>_<receiver>.wav`), `sha256`, `audio_rate`, `duration_sec`, `preroll_sec`, `snr_db_peak`, `snr_db_mean`, `noise_floor_db` and `truncated`. `ingest-catalog` reads both formats. For schema 2 it maps: capture start = `file_start_utc`, end = `end_utc`, receiver = `receiver_id` (falling back to `--receiver`), `snr_db` = `snr_db_mean` (peak stays in `raw_json`), `audio_sha256` = `sha256`, `sample_rate_hz` = `audio_rate`, `voice_start_s` = `preroll_sec` (`voice_start_method = 'recorder_preroll'`).
 - **Migration 0002** (`migrations/0002_review.sql`, applied by `init` or `migrate`) adds `reviews`, the append-only `edit_history` and `v_gold_labels` for the review app. See `docs/review-ui.md`.
+- **Migration 0003** adds `captures.snr_peak_db`: filled from `snr_db_peak` by `ingest-catalog`, and back-filled from stored `raw_json`. It also adds `messages.decoder_version`/`decoded_utc` and `message_decodes` for `load-decodes` (§12).
 - The repo has no DB, ASR or parser yet. The repo has 0 issues and 0 PRs, so there is no prior DB discussion to follow.
 - Other work in progress lives in other branches: `hfgcs/` (Phase 0) and `decoding/` (parser, ASR, `ingest_missileer.py` for ASR labels). **Rebroadcast linking is owned by this DB tool.** Decoding contributes only an optional text-similarity function (§3.1).
 
@@ -299,3 +300,85 @@ A trailing `x` (NEET's week-collapse) is accepted and ignored. In the CLI, `C`/`
 2. The dedup thresholds (120 s / 48 h / 0.90) are configurable defaults: CLI flags plus the `settings` table. They will be tuned on missileer data once Decoding has an evaluation set.
 3. Rebroadcast linking lives in the DB tool. Decoding exposes only `text_similarity` (§3.1), which the tool uses when it is importable and otherwise falls back to its built-in.
 4. No scraping of warwatchintel. Counts come only from hand-entered CSVs (`method='manual'` is enforced).
+
+## 12. Loading Decoding's output (`hfgcs_db.py load-decodes`)
+```bash
+hfgcs_db.py --db "$HFGCS_DB" load-decodes recordings/ decodes.jsonl   # dirs, *.decode.json or *.jsonl
+```
+**Input**, as specified on main (`docs/decoding.md` "Interface to the recording pipeline" and "Output JSON
+schema v0.1", #6 / `409aabf`):
+- A sidecar `<wav>.decode.json` = `{recording: <catalog entry>, asr: {...}, broadcasts: [<parser records>]}`.
+- `decodes.jsonl` is assumed to hold the same document, one per line.
+- A bare `Decoder.decode()` result (`{records, second_pass, duration_s}`) is also accepted.
+- Directories are searched recursively for `*.decode.json`.
+
+**Matching a recording to a capture**, in order:
+1. `recording.sha256` = `captures.audio_sha256`.
+2. `recording.file` = `captures.audio_path`.
+3. A unique capture whose path ends in the file name, from `recording.file` or the sidecar name minus
+   `.decode.json`.
+
+If none matches and the sidecar embeds a full schema-2 catalog entry, the capture is created from that entry
+(the same code as `ingest-catalog`; `--no-create-captures` turns this off). Unmatched decodes are listed, and
+`--strict` makes them exit 1.
+
+**Mapping (one `messages` row per broadcast record):**
+
+| Record | `messages` |
+|---|---|
+| `type` eam / skyking / test_count / unknown | `msg_type` EAM / SKYKING / OTHER (`broadcast_type` test) / skipped (`--keep-unknown` stores it as OTHER) |
+| `segment.start_sec` | `offset_sec`; `heard_utc` = capture start (`file_start_utc`) + `start_sec`, basis `voice_onset` |
+| `body` | `message_text`; `prefix` = first 2 characters |
+| `declared_length` | `length`, and `announced_length` when `length_source = announced` |
+| `callsign`, `addressee`, `preamble` | same names |
+| `codeword/time/authentication.value` | `skyking_codeword/_time/_auth` |
+| `confidence.mean` (Skyking: mean of the field confidences) | `confidence`; `chars[].confidence` → `char_confidence` |
+| `flags` | `partial` = any of `partial_start`/`mid_message_start`/`truncated`; `review_status = needs_review` for quality flags or confidence < 0.8 |
+| `asr.text` | `transcript`, only when the recording has a single broadcast (see mismatch 2) |
+| `asr.model` | `asr_model` |
+
+- `decoder_version` = `asr.decoder_version` if present. Otherwise it is built as
+  `parser:<schema_version>|asr:<model>|compute_type:…[|config_key:…|prompt_hash:…]`. `--decoder-version`
+  overrides it.
+- Every record loaded is also stored in `message_decodes`: canonical JSON, its SHA-256, the decoder version,
+  and `applied`.
+
+**Idempotence and human edits:**
+- The message key is `import_key = decode:<audio sha256>:<n>`, where `n` is the record's position among the
+  stored records of that recording.
+- A record already in `message_decodes` with the same (message, decoder version, record hash) is skipped.
+  Re-running the same files changes nothing.
+- A changed record (new decoder version or content) is handled per message:
+  - **Untouched message** (origin `pipeline`, no `edit_history` rows, not checked, not `corrected`, status
+    not `reviewed`/`rejected`): the machine fields are updated in place, `applied = 1`.
+  - **Human-touched message** (any of the above): nothing a person may have set is changed, including text,
+    transcript, callsign, prefix, length, addressee, type, review status and the checked flag. Only
+    `machine_text` (the newest machine copy), `decoder_version` and `decoded_utc` are updated. The full record
+    is kept in `message_decodes` with `applied = 0`, and the review page shows it. This is whole-row
+    protection: once a person edits any field, no machine field of that row is overwritten.
+- `link` runs afterwards when anything was inserted or updated (`--no-link` skips it; run
+  `hfgcs_db.py link` later).
+
+**Mismatches with Decoding's format** (requests for Decoding; their code was not changed):
+1. **No writer on main.** `docs/decoding.md` specifies the sidecar and `decodes.jsonl`, but no code on main
+   writes either. `Decoder.decode()` returns `{records, second_pass, duration_s}`, without `recording`, `asr`
+   or the `broadcasts` key. The loader accepts both shapes, but the worker should write the documented one.
+2. **No per-broadcast transcript.** Records hold no raw text (except `unknown`), and `segment` gives token
+   indices into the parser's own tokens, not into `asr.words`. When a recording has several broadcasts, the
+   loader cannot store each one's transcript. Request: add `segment.text` (or a word index range).
+3. **No decoder version.** `schema_version` is the parser schema only. The `asr` provenance fields ("model,
+   compute_type, prompt hash, VAD parameters") are not named in a schema, and `AsrConfig.key()` and the
+   second-pass info are not in the sidecar. Request: an `asr.decoder_version` (package version + `AsrConfig.key()`
+   + `DecodeConfig`) and `second_pass`.
+4. **No stable broadcast id.** Records are keyed by position in the recording. A re-decode that finds an extra
+   or missing broadcast earlier in the clip shifts later ones. Request: a stable id, or at least
+   `segment.start_sec` values that stay stable across decoder versions, so we can match by time.
+5. **`decodes.jsonl` line format is unspecified.** Is it the full sidecar or a summary? The loader assumes the
+   full sidecar.
+6. **Different type names.** `test_count`/`unknown` (parser) vs `radio_check`/`other` (labels.jsonl,
+   `ingest_missileer.py`). There is no parser type for radio checks; we map `test_count` → `OTHER`/`test`.
+7. **Two callsigns, no addressee for Skyking.** EAM records have both `callsign` (opening) and
+   `closing_callsign`; Skyking has only `callsign` (from the closing). We store `callsign` and keep the rest in
+   `message_decodes.record_json`.
+8. **Confidence shape differs.** It is a dict for EAM (`mean/min/low_count/reads_agree_ratio`), per field for
+   Skyking, and absent for `test_count`. A top-level scalar `confidence_overall` would avoid per-type rules.
