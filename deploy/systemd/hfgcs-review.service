@@ -8,8 +8,11 @@ After=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h/hfgcs-app
+# Interpreter: deploy/bin/hfgcs-python runs $HFGCS_PYTHON, default %h/hfgcs-app/.venv/bin/python.
+# Override with HFGCS_PYTHON=... in the EnvironmentFile, or a drop-in (docs/review-ui.md section 3.1).
+Environment=HFGCS_PYTHON=%h/hfgcs-app/.venv/bin/python
 EnvironmentFile=%h/.config/hfgcs/review.env
-ExecStart=%h/hfgcs-app/.venv/bin/python -m hfgcs.review_app serve
+ExecStart=%h/hfgcs-app/deploy/bin/hfgcs-python -m hfgcs.review_app serve
 # The LAN address may not exist yet when the user manager starts; retry until it does.
 Restart=on-failure
 RestartSec=10

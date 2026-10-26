@@ -8,6 +8,7 @@ Subcommands
                   SPECIFICATION,E6,NOTES,SOURCE,SET)
   export-neet     export messages in the same CSV format
   ingest-catalog  load the recorder's hfgcs_catalog.jsonl into `captures` (schema 2 or legacy)
+  load-decodes    load Decoding's <wav>.decode.json / decodes.jsonl into messages (keeps human edits)
   link            find simulcast/rebroadcast copies and rebuild clusters
   query           run a NEET-style query string (e.g. "2601&C30&G1&PR=CZ")
   import-missileer  upsert missileer.watch's CC0 archive.json (URL or file; read-only GET)
@@ -224,7 +225,8 @@ def catalog_entry_to_capture(e: dict) -> dict:
         return {
             "start": start, "end": end, "duration": dur, "receiver_code": e.get("receiver_id"),
             "mode": e.get("mode") or "USB", "snr_db": snr, "noise_floor_db": e.get("noise_floor_db"),
-            "sha256": e.get("sha256"), "sample_rate_hz": e.get("audio_rate"),
+            "snr_peak_db": e.get("snr_db_peak"), "sha256": e.get("sha256"),
+            "sample_rate_hz": e.get("audio_rate"),
             "voice_start_s": e.get("preroll_sec"), "notes": e.get("notes"),
         }
     end = _utc(e["timestamp"])
@@ -232,8 +234,39 @@ def catalog_entry_to_capture(e: dict) -> dict:
     return {
         "start": end - dt.timedelta(seconds=dur), "end": end, "duration": dur, "receiver_code": None,
         "mode": e.get("mode") or "USB", "snr_db": e.get("snr_db"), "noise_floor_db": e.get("noise_floor_db"),
-        "sha256": None, "sample_rate_hz": None, "voice_start_s": None, "notes": e.get("notes"),
+        "snr_peak_db": e.get("snr_db_peak"), "sha256": None, "sample_rate_hz": None, "voice_start_s": None,
+        "notes": e.get("notes"),
     }
+
+
+def require_schema(con, version: int) -> None:
+    have = _migrations().current_version(con)
+    if have < version:
+        raise SystemExit(f"database schema is version {have}; this command needs {version}. "
+                         "Run `hfgcs_db.py migrate` first.")
+
+
+def insert_capture(con, e: dict, receiver_id: int, base: Path, source_catalog: str, raw: str):
+    """INSERT OR IGNORE one catalog entry into `captures` (shared by ingest-catalog and
+    load-decodes). Returns the cursor (rowcount 0 = already present)."""
+    c = catalog_entry_to_capture(e)
+    rel = e.get("file")
+    f = None
+    if rel:
+        f = Path(rel) if Path(rel).is_absolute() else base / rel
+        if not f.is_file() and (base / Path(rel).name).is_file():
+            f = base / Path(rel).name   # catalog written with record_dir-relative paths
+    sha = c["sha256"] or (hashlib.sha256(f.read_bytes()).hexdigest() if f and f.is_file() else None)
+    return con.execute(
+        """INSERT OR IGNORE INTO captures(receiver_id, frequency_khz, mode, start_utc, end_utc,
+               duration_sec, noise_floor_db, snr_db, snr_peak_db, audio_path, audio_sha256, sample_rate_hz,
+               voice_start_s, voice_start_method, source_catalog, raw_json, notes)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (receiver_id, float(e["frequency_khz"]), c["mode"], to_z(c["start"]), to_z(c["end"]),
+         c["duration"], c["noise_floor_db"], c["snr_db"], c["snr_peak_db"], rel, sha,
+         c["sample_rate_hz"], c["voice_start_s"],
+         "recorder_preroll" if c["voice_start_s"] is not None else None, source_catalog, raw,
+         c["notes"]))
 
 
 def cmd_ingest_catalog(args) -> int:
@@ -241,6 +274,7 @@ def cmd_ingest_catalog(args) -> int:
     catalog_entry_to_capture). Idempotent: rows are keyed by the audio SHA-256
     (from the entry, else hashed from the file) and by the own-capture unique index."""
     con = connect(args.db)
+    require_schema(con, 3)
     receivers: dict[str, int] = {}
 
     def rid_for(code):
@@ -256,24 +290,9 @@ def cmd_ingest_catalog(args) -> int:
             if not line.strip():
                 continue
             e = json.loads(line)
-            c = catalog_entry_to_capture(e)
-            rel = e.get("file")
-            f = None
-            if rel:
-                f = Path(rel) if Path(rel).is_absolute() else base / rel
-                if not f.is_file() and (base / Path(rel).name).is_file():
-                    f = base / Path(rel).name   # catalog written with record_dir-relative paths
-            sha = c["sha256"] or (hashlib.sha256(f.read_bytes()).hexdigest() if f and f.is_file() else None)
-            cur = con.execute(
-                """INSERT OR IGNORE INTO captures(receiver_id, frequency_khz, mode, start_utc, end_utc,
-                       duration_sec, noise_floor_db, snr_db, audio_path, audio_sha256, sample_rate_hz,
-                       voice_start_s, voice_start_method, source_catalog, raw_json, notes)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (rid_for(c["receiver_code"]), float(e["frequency_khz"]), c["mode"], to_z(c["start"]),
-                 to_z(c["end"]), c["duration"], c["noise_floor_db"], c["snr_db"], rel, sha,
-                 c["sample_rate_hz"], c["voice_start_s"],
-                 "recorder_preroll" if c["voice_start_s"] is not None else None,
-                 f"{Path(args.catalog).name}:{lineno}", line.strip(), c["notes"]))
+            code = e.get("receiver_id") if "end_utc" in e else None
+            cur = insert_capture(con, e, rid_for(code), base,
+                                 f"{Path(args.catalog).name}:{lineno}", line.strip())
             n += cur.rowcount
             dup += 1 - cur.rowcount
     con.commit()
@@ -731,6 +750,261 @@ def cmd_query(args) -> int:
     return 0
 
 
+# ------------------------------------------------------------- load-decodes
+# Decoding output contract v1 (agreed with Decoding; branch decoding-output). One document per
+# recording, as <wav>.decode.json beside the WAV and as one line of decodes.jsonl:
+#   {schema_version, decoder_version, recording {path, sha256, <catalog fields>}, duration_s,
+#    decoded_at, asr {segments, words, first_pass, second_pass}, broadcasts [
+#      {broadcast_id, type, start_s, end_s, asr_word_span [i, j], transcript, callsign,
+#       callsigns_all [{callsign, role}], confidence (0-1), confidence_detail {...}, ...}]}
+DECODE_TYPES = {"eam": ("EAM", "broadcast"), "skyking": ("SKYKING", "broadcast"),
+                "radio_check": ("RADIOCHECK", "broadcast"), "other": ("OTHER", "unknown")}
+MATCH_WINDOW_S = 2.0
+PARTIAL_FLAGS = {"partial_start", "mid_message_start", "truncated"}
+REVIEW_FLAGS = {"truncated", "reads_disagree", "preamble_reads_disagree", "length_mismatch",
+                "declared_length_conflict", "preamble_body_mismatch", "single_read", "missing_preamble",
+                "invalid_time", "closing_callsign_mismatch", "non_character_words_in_body"}
+# Machine-owned columns a re-decode may overwrite on rows nobody has touched.
+MACHINE_FIELDS = ("msg_type", "broadcast_type", "heard_utc", "heard_at_basis", "offset_sec", "start_s",
+                  "end_s", "broadcast_id", "callsign", "callsigns_all", "prefix", "message_text", "length",
+                  "announced_length", "preamble", "addressee", "partial", "skyking_codeword", "skyking_time",
+                  "skyking_auth", "confidence", "confidence_detail", "char_confidence", "transcript",
+                  "asr_model", "review_status", "decoder_version", "decoded_utc")
+
+
+class DecodeFormatError(ValueError):
+    pass
+
+
+def broadcast_id(sha256: str, start_s: float) -> str:
+    return f"{sha256[:12]}@{round(float(start_s), 1):.1f}"
+
+
+def iter_decode_docs(paths):
+    """Yield (label, doc, path): sidecars (``*.decode.json``), JSONL files (one document per
+    line, e.g. ``decodes.jsonl``) and directories (searched recursively for sidecars)."""
+    for raw in paths:
+        p = Path(raw)
+        files = sorted(p.rglob("*.decode.json")) if p.is_dir() else [p]
+        for f in files:
+            if f.suffix == ".jsonl":
+                with open(f, encoding="utf-8") as fh:
+                    for lineno, line in enumerate(fh, start=1):
+                        if line.strip():
+                            yield f"{f.name}:{lineno}", json.loads(line), f
+            else:
+                yield f.name, json.loads(f.read_text(encoding="utf-8")), f
+
+
+def check_decode_doc(doc: dict) -> None:
+    """Raise DecodeFormatError unless ``doc`` follows contract v1 (the #6-era
+    ``{records, ...}`` / sidecar-without-decoder_version shapes are not accepted)."""
+    if not isinstance(doc, dict):
+        raise DecodeFormatError("document is not a JSON object")
+    missing = [k for k in ("schema_version", "decoder_version", "recording", "broadcasts") if k not in doc]
+    if missing:
+        raise DecodeFormatError(f"missing top-level {missing} (decode output contract v1 required)")
+    if not isinstance(doc["broadcasts"], list):
+        raise DecodeFormatError("broadcasts is not a list")
+    for n, b in enumerate(doc["broadcasts"]):
+        if not isinstance(b, dict) or not isinstance(b.get("start_s"), (int, float)) or "type" not in b:
+            raise DecodeFormatError(f"broadcast {n} lacks type/start_s")
+        c = b.get("confidence")
+        if c is not None and (isinstance(c, bool) or not isinstance(c, (int, float)) or not 0 <= c <= 1):
+            raise DecodeFormatError(f"broadcast {n}: confidence must be a 0-1 number")
+
+
+def _find_capture(con, rec_entry: dict, source_path: Path):
+    """Capture for a decode: by recording sha256 (the file's, then ``catalog_sha256``, which
+    Decoding keeps when the catalog's hash differs from the file), else stored path, else unique
+    file name (recording.path / recording.file, or the sidecar's name minus ``.decode.json``)."""
+    for key in ("sha256", "catalog_sha256"):
+        sha = rec_entry.get(key)
+        if sha:
+            row = con.execute("SELECT * FROM captures WHERE audio_sha256 = ?", (sha,)).fetchone()
+            if row:
+                return row
+    names = []
+    for key in ("path", "file"):
+        f = rec_entry.get(key)
+        if not f:
+            continue
+        row = con.execute("SELECT * FROM captures WHERE audio_path = ? AND external_source IS NULL",
+                          (f,)).fetchone()
+        if row:
+            return row
+        names.append(Path(f).name)
+    if source_path.name.endswith(".decode.json"):
+        names.append(source_path.name[: -len(".decode.json")])
+    for name in dict.fromkeys(names):
+        like = "%/" + name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        rows = con.execute("""SELECT * FROM captures WHERE external_source IS NULL
+                              AND (audio_path = ? OR audio_path LIKE ? ESCAPE '\\')""",
+                           (name, like)).fetchall()
+        if len(rows) == 1:
+            return rows[0]
+    return None
+
+
+def _decode_to_fields(b: dict, cap, doc: dict, version: str, decoded_utc: str) -> dict:
+    msg_type, btype = DECODE_TYPES.get(b.get("type"), ("OTHER", "unknown"))
+    flags = set(b.get("flags") or [])
+    start, end = float(b["start_s"]), b.get("end_s")
+    t0 = dt.datetime.fromisoformat(cap["start_utc"].replace("Z", "+00:00"))
+    chars = b.get("chars") or []
+    body = b.get("body") if msg_type == "EAM" else None
+    conf = b.get("confidence")
+    declared = b.get("declared_length")
+    sha = cap["audio_sha256"] or (doc.get("recording") or {}).get("sha256") or f"capture{cap['id']:011d}"
+    detail, cs_all = b.get("confidence_detail"), b.get("callsigns_all")
+    asr = doc.get("asr") or {}
+
+    def val(k):
+        v = b.get(k)
+        return v.get("value") if isinstance(v, dict) else v
+
+    return {
+        "msg_type": msg_type, "broadcast_type": btype if b.get("type") != "radio_check" else "directed",
+        "heard_utc": to_z(t0 + dt.timedelta(seconds=start)), "heard_at_basis": "voice_onset",
+        "offset_sec": start, "start_s": start, "end_s": None if end is None else float(end),
+        "broadcast_id": b.get("broadcast_id") or broadcast_id(sha, start),
+        "callsign": b.get("callsign"), "callsigns_all": None if cs_all is None else json.dumps(cs_all),
+        "prefix": body[:2] if body else None, "message_text": body or None,
+        "length": declared, "announced_length": declared if b.get("length_source") == "announced" else None,
+        "preamble": b.get("preamble"), "addressee": b.get("addressee"),
+        "partial": 1 if flags & PARTIAL_FLAGS else 0,
+        "skyking_codeword": val("codeword"), "skyking_time": val("time"),
+        "skyking_auth": val("authentication"),
+        "confidence": None if conf is None else float(conf),
+        "confidence_detail": None if detail is None else json.dumps(detail, sort_keys=True),
+        "char_confidence": json.dumps([c.get("confidence") for c in chars]) if chars else None,
+        "transcript": b.get("transcript"),
+        "asr_model": asr.get("model") or _version_part(version, "asr"),
+        "review_status": "needs_review" if (flags & REVIEW_FLAGS or (conf is not None and conf < 0.8))
+        else "auto",
+        "decoder_version": version, "decoded_utc": decoded_utc,
+    }
+
+
+def _version_part(version: str, key: str):
+    for part in version.split(";"):
+        k, _, v = part.partition("=")
+        if k == key:
+            return v
+    return None
+
+
+def _human_touched(con, mid: int) -> bool:
+    """True if a person edited or checked the message (review app / manual entry)."""
+    row = con.execute(
+        """SELECT m.origin, m.corrected, m.review_status,
+                  (SELECT count(*) FROM edit_history h WHERE h.message_id = m.id) AS edits,
+                  (SELECT coalesce(max(checked), 0) FROM reviews r WHERE r.message_id = m.id) AS checked
+           FROM messages m WHERE m.id = ?""", (mid,)).fetchone()
+    return bool(row["edits"] or row["checked"] or row["corrected"] or row["origin"] != "pipeline"
+                or row["review_status"] in ("reviewed", "rejected"))
+
+
+def _match_message(con, capture_id: int, start: float, bid: str, taken: set):
+    """Existing decoded message of this recording within MATCH_WINDOW_S of start_s (closest
+    first; an identical broadcast_id wins ties). Messages already matched in this document
+    are skipped, so two broadcasts never map onto one row."""
+    rows = con.execute(
+        """SELECT id, broadcast_id, coalesce(start_s, offset_sec) AS t FROM messages
+           WHERE capture_id = ? AND coalesce(start_s, offset_sec) BETWEEN ? AND ?""",
+        (capture_id, start - MATCH_WINDOW_S, start + MATCH_WINDOW_S)).fetchall()
+    rows = [r for r in rows if r["id"] not in taken]
+    rows.sort(key=lambda r: (abs(r["t"] - start), r["broadcast_id"] != bid))
+    return rows[0]["id"] if rows else None
+
+
+def cmd_load_decodes(args) -> int:
+    """Load Decoding's output (contract v1) into `messages` (see docs/database.md section 12)."""
+    con = connect(args.db)
+    require_schema(con, 3)
+    now = to_z(dt.datetime.now(dt.timezone.utc))
+    stats = Counter()
+    unmatched, invalid = [], []
+    base = Path(args.recordings_root) if args.recordings_root else None
+    for label, doc, path in iter_decode_docs(args.paths):
+        try:
+            check_decode_doc(doc)
+        except DecodeFormatError as e:
+            invalid.append(f"{label}: {e}")
+            continue
+        rec_entry = dict(doc["recording"] or {})
+        if "file" not in rec_entry and rec_entry.get("path"):
+            rec_entry["file"] = rec_entry["path"]
+        cap = _find_capture(con, rec_entry, path)
+        if cap is None and args.create_captures and "end_utc" in rec_entry and "frequency_khz" in rec_entry:
+            rid = ensure_receiver(con, rec_entry.get("receiver_id") or args.receiver, kind="local_sdr")
+            insert_capture(con, rec_entry, rid, base or path.parent, f"{label}#recording",
+                           json.dumps(rec_entry, sort_keys=True))
+            stats["captures_created"] += 1
+            cap = _find_capture(con, rec_entry, path)
+        if cap is None:
+            unmatched.append(label)
+            continue
+        stats["recordings"] += 1
+        version = args.decoder_version or str(doc["decoder_version"])
+        decoded_at = doc.get("decoded_at") or now
+        taken: set[int] = set()
+        for b in doc["broadcasts"]:
+            fields = _decode_to_fields(b, cap, doc, version, decoded_at)
+            canon = json.dumps(b, sort_keys=True, separators=(",", ":"))
+            rsha = hashlib.sha256(canon.encode()).hexdigest()
+            mid = _match_message(con, cap["id"], fields["start_s"], fields["broadcast_id"], taken)
+            if mid is None:
+                cols = ["capture_id", "origin", "import_key", *MACHINE_FIELDS]
+                vals = [cap["id"], "pipeline", f"decode:{fields['broadcast_id']}",
+                        *(fields[c] for c in MACHINE_FIELDS)]
+                marks = ",".join("?" * len(cols))
+                mid = con.execute(f"INSERT INTO messages({', '.join(cols)}) VALUES ({marks})",
+                                  vals).lastrowid
+                applied = 1
+                stats["inserted"] += 1
+            else:
+                if con.execute("SELECT 1 FROM message_decodes WHERE message_id = ? AND decoder_version = ? "
+                               "AND record_sha256 = ?", (mid, version, rsha)).fetchone():
+                    taken.add(mid)
+                    stats["unchanged"] += 1
+                    continue
+                if _human_touched(con, mid):
+                    # Keep the person's version; record the new machine copy beside it.
+                    con.execute("""UPDATE messages SET machine_text = ?, decoder_version = ?, decoded_utc = ?
+                                   WHERE id = ?""", (fields["message_text"], version, decoded_at, mid))
+                    applied = 0
+                    stats["kept_human"] += 1
+                else:
+                    sets = ", ".join(f"{c} = ?" for c in MACHINE_FIELDS)
+                    con.execute(f"UPDATE messages SET {sets} WHERE id = ?",
+                                [*(fields[c] for c in MACHINE_FIELDS), mid])
+                    applied = 1
+                    stats["updated"] += 1
+            taken.add(mid)
+            con.execute("""INSERT INTO message_decodes(message_id, decoder_version, broadcast_id, decoded_at,
+                               record_sha256, machine_text, transcript, confidence, applied, source_file,
+                               record_json)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                        (mid, version, fields["broadcast_id"], decoded_at, rsha, fields["message_text"],
+                         fields["transcript"], fields["confidence"], applied, label, canon))
+    con.commit()
+    print("loaded decodes: " + ", ".join(f"{k} {v}" for k, v in sorted(stats.items())) if stats
+          else "loaded decodes: nothing to do")
+    if invalid:
+        print(f"skipped {len(invalid)} document(s) not in decode contract v1: " + "; ".join(invalid[:5])
+              + (" ..." if len(invalid) > 5 else ""))
+    if unmatched:
+        print(f"no capture found for {len(unmatched)} decode(s) (run ingest-catalog first): "
+              + ", ".join(unmatched[:10]) + (" ..." if len(unmatched) > 10 else ""))
+    rc = 1 if args.strict and (unmatched or invalid) else 0
+    if args.link and (stats["inserted"] or stats["updated"]):
+        con.close()
+        rc = cmd_link(argparse.Namespace(db=args.db, simulcast_sec=None, window_hours=None, threshold=None,
+                                         min_known=None, similarity=None, max_len_diff=None)) or rc
+    return rc
+
+
 # ------------------------------------------------------------------------ main
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -758,6 +1032,19 @@ def main(argv=None) -> int:
     s.add_argument("--kind", default="local_sdr")
     s.add_argument("--recordings-root", help="directory the catalog's 'file' paths are relative to")
     s.set_defaults(fn=cmd_ingest_catalog)
+    s = sub.add_parser("load-decodes",
+                       help="load Decoding's <wav>.decode.json / decodes.jsonl (contract v1) into messages")
+    s.add_argument("paths", nargs="+", help="sidecar files, decodes.jsonl files or directories")
+    s.add_argument("--decoder-version", help="override the document's decoder_version")
+    s.add_argument("--recordings-root", help="for --create-captures: base of the recording 'file' paths")
+    s.add_argument("--receiver", default="local-hfplus", help="receiver code when the entry has none")
+    s.add_argument("--create-captures", action=argparse.BooleanOptionalAction, default=True,
+                   help="create a capture from the decode's embedded catalog entry if none matches")
+    s.add_argument("--link", action=argparse.BooleanOptionalAction, default=True,
+                   help="run `link` afterwards when messages were added or changed (default on)")
+    s.add_argument("--strict", action="store_true",
+                   help="exit 1 if any document is not contract v1 or has no capture")
+    s.set_defaults(fn=cmd_load_decodes)
     s = sub.add_parser("link", help="flags override the settings table, which overrides built-ins")
     s.add_argument("--simulcast-sec", type=float, help="default 120 (settings: link.simulcast_sec)")
     s.add_argument("--window-hours", type=float, help="default 48 (settings: link.window_hours)")

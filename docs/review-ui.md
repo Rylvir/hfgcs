@@ -43,7 +43,7 @@ no real gain. Neither page uses JavaScript.
   It is a link only; the app never fetches anything from NEET INTEL.
 - Gold-label export: `GET /export/gold.jsonl`, or the CLI (see §1.3).
 
-### 1.1 Database: migration 0002
+### 1.1 Database: migrations 0002 and 0003
 `migrations/0002_review.sql` adds:
 - `reviews(message_id PK→messages, checked 0/1, notes, reviewer, reviewed_utc, created_utc, updated_utc)`.
 - `edit_history(id, edited_utc, editor, editor_source, change_id, table_name, message_id, field,
@@ -53,15 +53,18 @@ no real gain. Neither page uses JavaScript.
   - `editor_source` is `cf_access`, `form`, `default` or `cli`.
   - There is deliberately no foreign key, so history survives if a message is deleted or re-imported.
 - `v_gold_labels`: checked reviews joined to the message, capture and receiver.
+- Migration 0003 adds `captures.snr_peak_db` (the page shows mean and peak SNR) and `message_decodes`. When
+  `load-decodes` brings a newer machine copy for a message a person already edited or checked, the page shows
+  it under the form as "newer machine decode …, not applied over your edits".
 
 Apply it with `scripts/hfgcs_db.py --db "$HFGCS_DB" migrate`. `init` also applies pending migrations, and
 `migrate --status` shows the current version. The runner is `hfgcs/db_migrations.py`: each
 `migrations/NNNN_*.sql` file runs once, in one transaction, and is recorded in `schema_version`. The app
-refuses to start on a DB without migration 0002 unless it is started with `--migrate`.
+refuses to start on a DB missing migration 0002 or 0003 unless it is started with `--migrate`.
 
 ### 1.2 Run locally
 ```bash
-python3 scripts/hfgcs_db.py --db /tmp/hfgcs.db init          # schema v1 + migration 0002
+python3 scripts/hfgcs_db.py --db /tmp/hfgcs.db init          # schema v1 + migrations 0002, 0003
 python3 scripts/hfgcs_db.py --db /tmp/hfgcs.db ingest-catalog hfgcs_catalog.jsonl --recordings-root .
 python -m hfgcs.review_app --db /tmp/hfgcs.db serve --recordings ./recordings   # http://127.0.0.1:8090/
 ```
@@ -192,7 +195,7 @@ parse image metadata.
 Assumed layout. This is not on main yet and needs the Engineering Lead's confirmation:
 ```
 ~/hfgcs-app/                 git checkout of this repo
-  .venv/                     python -m venv .venv && .venv/bin/pip install -e .
+  .venv/                     python3.12 -m venv .venv && .venv/bin/pip install -e .   (default interpreter, §3.1)
   recordings/                written by the 8992 recorder (record_dir)
   hfgcs_catalog.jsonl        the recorder's catalog (catalog_file)
   data/hfgcs.db              HFGCS_DB
@@ -206,6 +209,7 @@ cd ~/hfgcs-app
 .venv/bin/python scripts/hfgcs_db.py --db data/hfgcs.db init
 sqlite3 data/hfgcs.db 'PRAGMA journal_mode=WAL;'   # recommended: ingest + review writes don't block reads
 .venv/bin/python scripts/hfgcs_db.py --db data/hfgcs.db ingest-catalog hfgcs_catalog.jsonl --recordings-root .
+.venv/bin/python scripts/hfgcs_db.py --db data/hfgcs.db load-decodes recordings/   # Decoding's sidecars; links after
 cp deploy/env/review.env.example ~/.config/hfgcs/review.env && chmod 600 ~/.config/hfgcs/review.env
 cp deploy/env/public.env.example ~/.config/hfgcs/public.env
 cp deploy/systemd/hfgcs-review.service deploy/systemd/hfgcs-public.service ~/.config/systemd/user/
@@ -214,7 +218,7 @@ systemctl --user enable --now hfgcs-review.service hfgcs-public.service
 sudo loginctl enable-linger scribe        # start user units at boot without a login
 journalctl --user -u hfgcs-review -f
 ```
-- Optional Datasette: `.venv/bin/pip install datasette`, then copy and enable
+- Optional Datasette: `pip install datasette` into the interpreter's environment, then copy and enable
   `deploy/systemd/hfgcs-datasette.service` (LAN only, 8092, read-only). Nothing depends on it.
 - The recorder's catalog is already handled. `ingest-catalog` reads the schema-2 lines written by
   `hfgcs/capture.py` (`start_utc`/`file_start_utc`/`end_utc`, `receiver_id`, `sha256`,
@@ -222,14 +226,41 @@ journalctl --user -u hfgcs-review -f
   format (see `docs/database.md` §1). Re-running it is idempotent, so a timer or cron job can call it.
 - The units restart on failure every 10 s. If the user manager starts before `192.168.2.214` is assigned,
   the first bind fails and the next retry succeeds.
+- Existing DBs: `scripts/hfgcs_db.py --db data/hfgcs.db migrate`. Migration 0003 adds `captures.snr_peak_db`
+  (back-filled from the stored catalog JSON), `messages.decoder_version`/`decoded_utc` and `message_decodes`.
+  The review app needs migrations up to 0003.
+- Transcripts: `load-decodes` (docs/database.md §12; Decoding's output contract v1) is idempotent. Run it after `ingest-catalog`, from the
+  same timer, and it never overwrites a row a person has edited or checked.
 
-### Firewall (suggested; adjust to the existing ufw rules)
+### 3.1 Choosing the Python interpreter
+The units do not hardcode the venv. Each `ExecStart` runs `deploy/bin/hfgcs-python`, a small `sh` wrapper
+that `exec`s `$HFGCS_PYTHON`, falling back to `$HOME/hfgcs-app/.venv/bin/python` (the Python 3.12 venv on
+hilltop). Each unit also sets `Environment=HFGCS_PYTHON=%h/hfgcs-app/.venv/bin/python` *before* its
+`EnvironmentFile=`, so there are two ways to override it:
+
+1. **Env file (simplest):** add `HFGCS_PYTHON=/path/to/python` to `~/.config/hfgcs/review.env` /
+   `public.env` (`datasette.env` for the optional Datasette unit), then `systemctl --user restart <unit>`.
+   Values in `EnvironmentFile=` override `Environment=`.
+2. **Drop-in:** `systemctl --user edit hfgcs-review.service` and add
+   ```ini
+   [Service]
+   Environment=HFGCS_PYTHON=/opt/python3.12/bin/python3
+   ```
+   This works too as long as the env file does not set `HFGCS_PYTHON` (the env file still wins). To replace
+   the command entirely, a drop-in can clear and redefine it: `ExecStart=` followed by
+   `ExecStart=/path/to/python -m hfgcs.review_app serve`.
+
+If the interpreter is missing, the wrapper exits 127 with the path it tried, which shows up in
+`journalctl --user -u <unit>`. The optional Datasette unit runs `hfgcs-python -m datasette`, so it uses the
+same interpreter, which must have `datasette` installed.
+
+### 3.2 Firewall (suggested; adjust to the existing ufw rules)
 ```bash
 sudo ufw allow from 192.168.2.0/24 to any port 8090 proto tcp   # review app: LAN only
 sudo ufw allow from 192.168.2.0/24 to any port 8092 proto tcp   # Datasette, only if enabled
 sudo ufw allow from <mountain's LAN IP> to any port 8091 proto tcp   # public page: tunnel host only
 ```
 
-### Tunnel (on mountain; for reference only)
+### 3.3 Tunnel (on mountain; for reference only)
 The ingress rule for `hfgcs.scanplacer.com` must be `service: http://192.168.2.214:8091`. No hostname may
 map to `:8090` or `:8092`.

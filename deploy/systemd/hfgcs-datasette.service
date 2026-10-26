@@ -1,5 +1,6 @@
 # OPTIONAL: Datasette over the message DB, LAN only, read-only. Not required by anything.
-# Needs `~/hfgcs-app/.venv/bin/pip install datasette`. Never route a tunnel to this port.
+# Needs `pip install datasette` in the interpreter's environment. Never route a tunnel to this port.
+# Interpreter: deploy/bin/hfgcs-python ($HFGCS_PYTHON, default %h/hfgcs-app/.venv/bin/python).
 [Unit]
 Description=HFGCS Datasette (optional, LAN only, port 8092)
 After=network-online.target
@@ -7,7 +8,9 @@ After=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h/hfgcs-app
-ExecStart=%h/hfgcs-app/.venv/bin/datasette serve %h/hfgcs-app/data/hfgcs.db \
+Environment=HFGCS_PYTHON=%h/hfgcs-app/.venv/bin/python
+EnvironmentFile=-%h/.config/hfgcs/datasette.env
+ExecStart=%h/hfgcs-app/deploy/bin/hfgcs-python -m datasette serve %h/hfgcs-app/data/hfgcs.db \
     --host 192.168.2.214 --port 8092 --metadata %h/hfgcs-app/datasette/metadata.json \
     --setting sql_time_limit_ms 3000 --setting allow_download off
 Restart=on-failure

@@ -56,9 +56,9 @@ def test_init_applies_migrations_and_migrate_upgrades_v1(tool, tmp_path):
     con.executescript((ROOT / "schema.sql").read_text())   # a v1 database as created before 0002
     con.close()
     rc, out = run(tool, "--db", db, "migrate", "--status")
-    assert "schema version 1" in out and "[2]" in out
+    assert "schema version 1" in out and "[2, 3]" in out
     rc, out = run(tool, "--db", db, "migrate")
-    assert rc == 0 and "applied migrations [2]" in out
+    assert rc == 0 and "applied migrations [2, 3]" in out
     rc, out = run(tool, "--db", db, "migrate")
     assert "already current" in out
     con = sqlite3.connect(db)
@@ -66,4 +66,4 @@ def test_init_applies_migrations_and_migrate_upgrades_v1(tool, tmp_path):
     assert {"reviews", "edit_history", "v_gold_labels", "trg_edit_history_no_update"} <= names
     db2 = str(tmp_path / "fresh.db")
     run(tool, "--db", db2, "init")
-    assert sqlite3.connect(db2).execute("SELECT max(version) FROM schema_version").fetchone()[0] == 2
+    assert sqlite3.connect(db2).execute("SELECT max(version) FROM schema_version").fetchone()[0] == 3

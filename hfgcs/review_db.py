@@ -19,7 +19,7 @@ from typing import IO, Iterator, Optional
 
 from . import db_migrations
 
-REVIEW_SCHEMA_VERSION = 2
+REVIEW_SCHEMA_VERSION = 3  # 0002 review tables, 0003 snr_peak_db + message_decodes
 AUDIO_TYPES = {".wav": "audio/wav", ".flac": "audio/flac", ".opus": "audio/ogg", ".ogg": "audio/ogg",
                ".mp3": "audio/mpeg", ".m4a": "audio/mp4"}
 NEET_TIMECARD_URL = "https://neetintel.github.io/dtcp_gallery.html?{yymmdd}"
@@ -65,10 +65,10 @@ def connect(path: str | os.PathLike, *, migrate: bool = False) -> sqlite3.Connec
     con.execute("PRAGMA busy_timeout = 10000")
     if migrate:
         db_migrations.apply_migrations(con)
-    elif any(v == REVIEW_SCHEMA_VERSION for v, _, _ in db_migrations.pending(con)):
+    elif any(v <= REVIEW_SCHEMA_VERSION for v, _, _ in db_migrations.pending(con)):
         con.close()
-        raise RuntimeError(f"{p} lacks the review tables; run `scripts/hfgcs_db.py --db {p} migrate`"
-                           " (or start the app with --migrate)")
+        raise RuntimeError(f"{p} needs migrations up to {REVIEW_SCHEMA_VERSION}; run "
+                           f"`scripts/hfgcs_db.py --db {p} migrate` (or start the app with --migrate)")
     return con
 
 
@@ -108,7 +108,8 @@ def list_recordings(con: sqlite3.Connection, *, date: Optional[str] = None, freq
     total = con.execute(f"SELECT count(*) FROM captures c WHERE {where}", params).fetchone()[0]
     rows = con.execute(
         f"""SELECT c.id, c.start_utc, c.end_utc, c.frequency_khz, c.mode, c.duration_sec, c.snr_db,
-                   c.noise_floor_db, c.audio_path, c.audio_sha256, c.voice_start_s, r.code AS receiver
+                   c.snr_peak_db, c.noise_floor_db, c.audio_path, c.audio_sha256, c.voice_start_s,
+                   r.code AS receiver
             FROM captures c LEFT JOIN receivers r ON r.id = c.receiver_id
             WHERE {where} ORDER BY c.start_utc DESC, c.id DESC LIMIT ? OFFSET ?""",
         [*params, int(limit), int(offset)]).fetchall()
@@ -123,7 +124,9 @@ def list_recordings(con: sqlite3.Connection, *, date: Optional[str] = None, freq
                            v.text_length, v.addressee, v.group_no, v.confidence, v.review_status,
                            m.capture_id, m.transcript, m.machine_text, m.corrected, m.origin,
                            coalesce(rv.checked, 0) AS checked, rv.notes AS review_notes, rv.reviewer,
-                           rv.reviewed_utc,
+                           rv.reviewed_utc, m.decoder_version,
+                           (SELECT d.machine_text FROM message_decodes d WHERE d.message_id = m.id
+                            AND d.applied = 0 ORDER BY d.id DESC LIMIT 1) AS pending_machine_text,
                            (SELECT coalesce(max(h.id), 0) FROM edit_history h
                             WHERE h.message_id = m.id) AS version
                     FROM v_messages v JOIN messages m ON m.id = v.id
