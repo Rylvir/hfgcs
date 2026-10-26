@@ -30,6 +30,37 @@ def utc_now():
     return datetime.now(timezone.utc)
 
 
+def _say(msg: str) -> None:
+    """print() that tolerates a closed stdout.
+
+    Under systemd (``KillSignal=SIGINT``) every process in the unit gets the
+    signal, including a ``tee`` the unit pipes our output through, so stdout may
+    already be a broken pipe when we report a requested stop.
+    """
+    try:
+        print(msg, flush=True)
+    except OSError:
+        pass
+
+
+def _settle_stdio() -> None:
+    """Flush stdout/stderr; if the pipe is gone, point them at /dev/null.
+
+    Otherwise Python's final flush fails and the exit status becomes 120 even
+    though the shutdown was clean.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except (OSError, ValueError):
+            try:
+                devnull = os.open(os.devnull, os.O_WRONLY)
+                os.dup2(devnull, stream.fileno())
+                os.close(devnull)
+            except (OSError, ValueError):
+                pass
+
+
 class HFGCSScanner:
     """Drives one source: tune, feed ChannelCapture, save recordings."""
 
@@ -41,6 +72,7 @@ class HFGCSScanner:
         self.saved: list[dict] = []
         self.refused: dict[float, str] = {}
         self.eof = False
+        self.interrupted = False
 
     # -- setup ------------------------------------------------------------
     def start(self) -> list[float]:
@@ -134,7 +166,8 @@ class HFGCSScanner:
                     if self.eof or (max_seconds is not None and total >= max_seconds):
                         break
         except KeyboardInterrupt:
-            print("\nStopping...")
+            self.interrupted = True
+            _say("\nStopping...")
 
     def probe(self, seconds: float = 0.8) -> dict[float, float]:
         """Measure the voice slot on each usable channel."""
@@ -307,6 +340,18 @@ def select_profile(cfg: Config, name: str, key_env: str) -> int:
 
 
 def main(argv=None):
+    """Exit status: 0 on a normal end or a requested stop (SIGINT), non-zero on errors."""
+    try:
+        code = _main(argv)
+    except KeyboardInterrupt:
+        # SIGINT outside the capture loop (starting up or closing the source) is
+        # still a requested stop, not a failure: systemd should not log "Failed".
+        code = 0
+    _settle_stdio()
+    return code
+
+
+def _main(argv=None):
     args = build_parser().parse_args(argv)
     level = logging.INFO if args.verbose else logging.WARNING
     logging.basicConfig(level=level, format="%(asctime)s %(levelname)s %(message)s")
