@@ -104,18 +104,28 @@ float32 costs some speed: 120 s of audio at 4 threads took 19.6–20.0 s, agains
 - **Windowing.** Audio longer than 1.33 × `window_s` (240 s) is decoded as independent windows of about 240 s. Each
   cut goes at the quietest 0.5 s within ±20 s of its nominal point.
 - **Loop guard.** A segment is a loop when it has more than 3 words/s, or when one 1–3-word unit makes up 60 % of its
-  12 or more words. The same applies when a window goes over 3 words/s overall.
-- **Wall-time cap.** A window stops after `max_rtf` (2) × its duration of wall time.
+  12 or more words. Repeats are first cut to one occurrence ("Six Six Six …" becomes "Six"), and the segment is kept
+  if that fixes it. Otherwise it is a loop, as is a window that goes over 3 words/s overall.
+- **Wall-time cap.** One budget per decode: `max_rtf` (2) × the clip duration, for everything. A window's first decode
+  may use 0.6 of its share (1.2 × its length). Fallbacks and repairs run only while budget is left, and skipped ones
+  are reported. `guard.wall_s` holds the total.
 - **Fallback.** After a loop or a timeout, the segments before the problem are kept. The rest of the window is
   decoded once more with `fallback` (VAD on, no conditioning, temperature 0).
 - **Coverage guard.** A word-free stretch over 12 s that is not digital silence is decoded again on its own (fresh
-  context), and only the words inside the gap are merged in.
+  context), and only the words inside the gap are merged in. A stretch a fallback has already retried is not decoded
+  again.
 - **Reporting.** Each decode reports `asr.guard`, which holds the windows, fallbacks, repairs and coverage.
 - **Cache key.** `AsrConfig.key()` hashes every field except `cpu_threads`.
 
 The wall-time cap is the one guard that depends on the machine. Under heavy CPU contention it can fire where a loop
 check would have, so a decode that hits it may differ between machines. Its `guard.fallbacks[].reason` is "timeout".
 Healthy EAM coverage (word-span seconds / duration) is about 0.2–0.5.
+
+**Worker use.** `python -m decoding.run <catalog.jsonl>` skips recordings whose sidecar already has the same sha256
+and `decoder_version`. It runs at nice +10 by default (`--nice`) and appends to `decodes.jsonl` under a file lock.
+It logs one line per recording to stderr: duration, wall time, RTF, words, coverage, windows, fallbacks and repairs.
+`--max-rtf` and `--limit` are available. Exit codes: 0 means everything was decoded or already up to date. 1 means at
+least one recording was missing or failed (the rest were still processed). 2 means the input list could not be read.
 
 ### Chunking long recordings
 Recordings are often 2–4 minutes (missileer clips run 79–117 s plus pre-roll). faster-whisper already windows audio in 30 s chunks after VAD. We keep the word timestamps absolute, and we keep `chunk_length` at the default of 30. For multi-hour streams (YouTube or a NEET INTEL archive), split on VAD silences of 3 s or more into pieces of at most 10 minutes, with 5 s of overlap. Deduplicate words in the overlap by timestamp. whisperX's batched VAD-cut pipeline (wav2vec2 alignment) is an option once we have a GPU, to get tighter word times.
