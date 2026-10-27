@@ -1,8 +1,8 @@
 # decode_sample_two_broadcasts.decode.json
 
 A real decode document (contract v1, `docs/decode.schema.json`) written by `python -m decoding.run` on
-2026-10-26 with the default decoder of decoding 0.3 (`small.en` float32 on CPU, long-recording guards, vote3
-second pass), from a fresh (uncached) decode. The 0.2 fixture came from int8 and is not reproducible.
+2026-10-26 with the default decoder of decoding 0.3.1 (`small.en` float32 on CPU, long-recording guards, vote3
+second pass), from a fresh (uncached) decode at decoding 0.3.1. The 0.2 fixture came from int8 and is not reproducible.
 `tests/test_asr_guards.py::test_fixture_covers_the_whole_recording` checks its coverage.
 
 The input was synthetic: two gold eval clips from the missileer.watch feed (CC0-1.0, attribution appreciated:

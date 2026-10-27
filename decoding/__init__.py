@@ -9,7 +9,7 @@ from .metrics import cer, edit_distance
 from .rebroadcast import link_rebroadcasts
 from .tokens import Token, tokenize
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 """Decoding package version (``decoder_version``'s ``decoding/<version>``).
 Bump it on any change that alters decode output."""
 

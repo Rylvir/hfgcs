@@ -1,6 +1,6 @@
 {
  "schema_version": "1.0",
- "decoder_version": "decoding/0.3.0;parser=0.2;asr=437b8c03f291;second_pass=vote3@0.3",
+ "decoder_version": "decoding/0.3.1;parser=0.2;asr=437b8c03f291;second_pass=vote3@0.3",
  "recording": {
   "path": "/workspace/hfgcs-data/eval/samples/HFGCS_11175kHz_20260923T173253Z_eval-synthetic.wav",
   "sha256": "113a77c6bb383291d114bc845d206919462d04f79e4482cbf495ff1aa7b07a43",
@@ -22,23 +22,23 @@
   "notes": "SYNTHETIC: gold eam-356f1a01 (EAM) + 2 s silence + gold eam-86d80b13 (EAM), concatenated; missileer.watch CC0-1.0"
  },
  "duration_s": 374.297,
- "decoded_at": "2026-10-27T00:07:48Z",
+ "decoded_at": "2026-10-27T00:53:14Z",
  "asr": {
   "model": "small.en",
   "compute_type": "float32",
   "config_key": "437b8c03f291",
-  "decoder_version": "decoding/0.3.0;parser=0.2;asr=437b8c03f291;second_pass=vote3@0.3",
+  "decoder_version": "decoding/0.3.1;parser=0.2;asr=437b8c03f291;second_pass=vote3@0.3",
   "day_callsigns": [],
   "duration_s": 374.297125,
-  "asr_seconds": 496.2,
-  "text": "Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform Lima Uniform Kilo Yankee Sierra Kilo India Victor Victor Sierra Four. Foxtrot X-ray Tree Papa Delta Romeo Keep to it. Seven Delta Echo Golf. I say again. Alpha Charlie Four Alpha Uniform Lima Uniform Kilo Yankee Sierra Kilo India Victor Sierra Four. Victor Tango Hotel Foxtrot X-ray Tree Papa Delta Romeo Victor Seven Delta Echo Golf. This is Cupway out. Out. All stations, all stations. This is Sockhole, Sockhole Freak Quebec Hotel Beautiful Delta Sierra Two S -ray Quebec Hotel Beautiful Delta Sierra Two, Six Five, Quebec Hotel Beautiful Delta Sierra Two, Six Five, and the Follow us. Get back. Hotel. Uniform. Delta. Sierra. Two. Roast. Bravo. Kilo. Alpha. X-ray. Three. Delta. Alpha. Victor. Alpha. Delta. Five. Delta Center. Sierra. Juliet. Victor. Two. X-ray. Charlie. Lima. Zulu. Alpha. X-ray. Get back. Hotel. Beautiful. Delta. Sierra. Two. Bravo. Bravo. Kilo. Oscar. X -ray. Victor Three. Doll. Alpha. Victor. Alpha. Delta. Five. November. Sierra. Juliet. Victor. X-ray. X-ray. X-ray. I say, circle up.",
+  "asr_seconds": 274.6,
+  "text": "Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform Lima Uniform Kilo Yankee Sierra Kilo India Victor Victor Sierra Four. Foxtrot X-ray Tree Papa Delta Romeo Keep to it. Seven Delta Echo Golf. I say again. Alpha Charlie Four Alpha Uniform Lima Uniform Kilo Yankee Sierra Kilo India Victor Sierra Four. Victor Tango Hotel Foxtrot X-ray Tree Papa Delta Romeo Victor Seven Delta Echo Golf. This is Cupway out. Out. All stations, all stations. This is Sockhole, Sockhole Freak Quebec Hotel Beautiful Delta Sierra Two S -ray Quebec Hotel Beautiful Delta Sierra Two, Six Five, Quebec Hotel Beautiful Delta Sierra Two, Six Five, and the Follow us. Get back. Hotel. Uniform. Delta. Sierra. Two. Roast. Bravo. Kilo. Alpha. X-ray. Three. Delta. Alpha. Victor. Alpha. Delta. Five. Delta Center. Sierra. Juliet. Victor. Two. X-ray. Charlie. Lima. Zulu. Alpha. X-ray. Get back. Hotel. Beautiful. Delta. Sierra. Two. Bravo. Bravo. Kilo. Oscar. X -ray. Victor Three. Doll. Alpha. Victor. Alpha. Delta. Five. November. Sierra. Juliet. Victor. X-ray. X-ray. X-ray. Delta. X -ray. X -ray. Delta. X -ray. X -ray. Delta. X -ray. X -ray. Delta. Zulu, Alpha, this is Star -Called Power. Delta.",
   "segments": [
    {
     "start": 1.0,
     "end": 30.68,
     "text": "Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform Lima, stand by.",
-    "avg_logprob": -0.26748437782128653,
-    "no_speech_prob": 0.11758644878864288,
+    "avg_logprob": -0.26748455067475635,
+    "no_speech_prob": 0.11758632957935333,
     "word_span": [
      0,
      20
@@ -48,8 +48,8 @@
     "start": 36.06,
     "end": 58.66,
     "text": "Alpha Charlie Four Alpha Uniform Lima Uniform Kilo Yankee Sierra Kilo India Victor Victor Sierra Four.",
-    "avg_logprob": -0.36238243528034375,
-    "no_speech_prob": 0.5990610718727112,
+    "avg_logprob": -0.3623820076818052,
+    "no_speech_prob": 0.5990617871284485,
     "word_span": [
      21,
      36
@@ -59,8 +59,8 @@
     "start": 63.7,
     "end": 80.84,
     "text": "Foxtrot X-ray Tree Papa Delta Romeo Keep to it. Seven Delta Echo Golf.",
-    "avg_logprob": -0.4752089562623397,
-    "no_speech_prob": 0.5873083472251892,
+    "avg_logprob": -0.4752092698346014,
+    "no_speech_prob": 0.5873082876205444,
     "word_span": [
      37,
      50
@@ -70,8 +70,8 @@
     "start": 80.84,
     "end": 109.84,
     "text": "I say again. Alpha Charlie Four Alpha Uniform Lima Uniform Kilo Yankee Sierra Kilo India Victor Sierra Four.",
-    "avg_logprob": -0.1502695655822754,
-    "no_speech_prob": 0.5739709138870239,
+    "avg_logprob": -0.15026962280273437,
+    "no_speech_prob": 0.573969841003418,
     "word_span": [
      51,
      68
@@ -81,8 +81,8 @@
     "start": 111.84,
     "end": 133.44,
     "text": "Victor Tango Hotel Foxtrot X-ray Tree Papa Delta Romeo Victor Seven Delta Echo Golf.",
-    "avg_logprob": -0.20604165581365427,
-    "no_speech_prob": 0.4476867914199829,
+    "avg_logprob": -0.20604185573756695,
+    "no_speech_prob": 0.447685569524765,
     "word_span": [
      69,
      83
@@ -92,8 +92,8 @@
     "start": 133.44,
     "end": 138.98,
     "text": "This is Cupway out.",
-    "avg_logprob": -0.4992167154947917,
-    "no_speech_prob": 0.35820651054382324,
+    "avg_logprob": -0.49921676847669816,
+    "no_speech_prob": 0.35820668935775757,
     "word_span": [
      84,
      87
@@ -103,8 +103,8 @@
     "start": 163.12,
     "end": 164.52,
     "text": "Out.",
-    "avg_logprob": -0.491060733795166,
-    "no_speech_prob": 0.1311665028333664,
+    "avg_logprob": -0.4910614013671875,
+    "no_speech_prob": 0.13116618990898132,
     "word_span": [
      88,
      88
@@ -114,8 +114,8 @@
     "start": 177.58,
     "end": 179.92,
     "text": "All stations, all stations.",
-    "avg_logprob": -0.22346562809414333,
-    "no_speech_prob": 0.28361767530441284,
+    "avg_logprob": -0.22346581353081596,
+    "no_speech_prob": 0.283617228269577,
     "word_span": [
      89,
      92
@@ -125,8 +125,8 @@
     "start": 179.92,
     "end": 209.18,
     "text": "This is Sockhole, Sockhole Freak Quebec Hotel Beautiful Delta Sierra Two S -ray Quebec Hotel Beautiful Delta Sierra",
-    "avg_logprob": -0.6142985362272996,
-    "no_speech_prob": 0.007238190621137619,
+    "avg_logprob": -0.6142983069786658,
+    "no_speech_prob": 0.007238163147121668,
     "word_span": [
      93,
      110
@@ -136,8 +136,8 @@
     "start": 210.18,
     "end": 227.74,
     "text": "Two, Six Five, Quebec Hotel Beautiful Delta Sierra Two, Six Five, and the",
-    "avg_logprob": -1.0510968436365542,
-    "no_speech_prob": 0.0034549240954220295,
+    "avg_logprob": -1.0510969576628313,
+    "no_speech_prob": 0.003454947378486395,
     "word_span": [
      111,
      123
@@ -148,7 +148,7 @@
     "end": 250.24,
     "text": "Follow us. Get back. Hotel. Uniform. Delta. Sierra. Two. Roast. Bravo. Kilo. Alpha. X-ray.",
     "avg_logprob": -0.6406925092725193,
-    "no_speech_prob": 0.009837035089731216,
+    "no_speech_prob": 0.009837012737989426,
     "word_span": [
      124,
      138
@@ -158,8 +158,8 @@
     "start": 254.24,
     "end": 281.34,
     "text": "Three. Delta. Alpha. Victor. Alpha. Delta. Five. Delta Center. Sierra. Juliet. Victor. Two. X-ray.",
-    "avg_logprob": -0.44199648770419037,
-    "no_speech_prob": 0.6273844838142395,
+    "avg_logprob": -0.44199651660341205,
+    "no_speech_prob": 0.62738436460495,
     "word_span": [
      139,
      153
@@ -169,7 +169,7 @@
     "start": 286.46,
     "end": 315.54,
     "text": "Charlie. Lima. Zulu. Alpha. X-ray. Get back. Hotel. Beautiful. Delta. Sierra. Two. Bravo. Bravo.",
-    "avg_logprob": -0.2170131307314424,
+    "avg_logprob": -0.21701295717674143,
     "no_speech_prob": 0.6162381172180176,
     "word_span": [
      154,
@@ -180,8 +180,8 @@
     "start": 314.54,
     "end": 331.42,
     "text": "Kilo. Oscar. X -ray. Victor Three. Doll.",
-    "avg_logprob": -0.799858984739884,
-    "no_speech_prob": 0.007771690376102924,
+    "avg_logprob": -0.7998589277267456,
+    "no_speech_prob": 0.007771741133183241,
     "word_span": [
      169,
      175
@@ -191,22 +191,44 @@
     "start": 330.54,
     "end": 353.44,
     "text": "Alpha. Victor. Alpha. Delta. Five. November. Sierra. Juliet. Victor. X-ray. X-ray. X-ray.",
-    "avg_logprob": -0.265250967705951,
-    "no_speech_prob": 0.765653133392334,
+    "avg_logprob": -0.26525090985438404,
+    "no_speech_prob": 0.7656524181365967,
     "word_span": [
      176,
      190
     ]
    },
    {
-    "start": 365.33,
-    "end": 367.69,
-    "text": "I say, circle up.",
-    "avg_logprob": -0.9934445487128364,
-    "no_speech_prob": 0.06635572016239166,
+    "start": 353.44,
+    "end": 374.02,
+    "text": "Delta. X -ray. X -ray. Delta. X -ray. X -ray. Delta. X -ray. X -ray. Delta.",
+    "avg_logprob": -0.20776077058580186,
+    "no_speech_prob": 0.27156755328178406,
     "word_span": [
      191,
-     194
+     206
+    ]
+   },
+   {
+    "start": 359.14,
+    "end": 367.64,
+    "text": "Zulu, Alpha, this is Star -Called Power.",
+    "avg_logprob": -0.8565463225046793,
+    "no_speech_prob": 0.03189399465918541,
+    "word_span": [
+     207,
+     213
+    ]
+   },
+   {
+    "start": 374.02,
+    "end": 374.24,
+    "text": "Delta.",
+    "avg_logprob": -0.03537223784513371,
+    "no_speech_prob": 0.6701622009277344,
+    "word_span": [
+     214,
+     214
     ]
    }
   ],
@@ -1358,35 +1380,157 @@
     "probability": 0.7635
    },
    {
-    "word": "I",
-    "start": 365.33,
-    "end": 365.35,
-    "probability": 0.0236
+    "word": "Delta.",
+    "start": 353.44,
+    "end": 353.64,
+    "probability": 0.0001
    },
    {
-    "word": "say,",
-    "start": 365.35,
-    "end": 365.89,
-    "probability": 0.0141
+    "word": "X",
+    "start": 355.22,
+    "end": 355.46,
+    "probability": 0.003
    },
    {
-    "word": "circle",
-    "start": 366.35,
-    "end": 366.99,
-    "probability": 0.4559
+    "word": "-ray.",
+    "start": 355.46,
+    "end": 355.56,
+    "probability": 0.0251
    },
    {
-    "word": "up.",
-    "start": 366.99,
-    "end": 367.69,
-    "probability": 0.9077
+    "word": "X",
+    "start": 355.72,
+    "end": 355.72,
+    "probability": 0.1051
+   },
+   {
+    "word": "-ray.",
+    "start": 355.72,
+    "end": 355.96,
+    "probability": 0.4131
+   },
+   {
+    "word": "Delta.",
+    "start": 356.96,
+    "end": 357.64,
+    "probability": 0.0074
+   },
+   {
+    "word": "X",
+    "start": 357.64,
+    "end": 357.64,
+    "probability": 0.7014
+   },
+   {
+    "word": "-ray.",
+    "start": 357.64,
+    "end": 357.64,
+    "probability": 0.9781
+   },
+   {
+    "word": "X",
+    "start": 357.64,
+    "end": 357.64,
+    "probability": 0.3997
+   },
+   {
+    "word": "-ray.",
+    "start": 357.64,
+    "end": 357.74,
+    "probability": 0.986
+   },
+   {
+    "word": "Delta.",
+    "start": 359.34,
+    "end": 359.8,
+    "probability": 0.455
+   },
+   {
+    "word": "X",
+    "start": 359.8,
+    "end": 359.8,
+    "probability": 0.6955
+   },
+   {
+    "word": "-ray.",
+    "start": 359.8,
+    "end": 359.8,
+    "probability": 0.994
+   },
+   {
+    "word": "X",
+    "start": 359.8,
+    "end": 359.8,
+    "probability": 0.2861
+   },
+   {
+    "word": "-ray.",
+    "start": 359.8,
+    "end": 359.98,
+    "probability": 0.9935
+   },
+   {
+    "word": "Delta.",
+    "start": 360.14,
+    "end": 360.14,
+    "probability": 0.6393
+   },
+   {
+    "word": "Zulu,",
+    "start": 361.16,
+    "end": 362.34,
+    "probability": 0.4662
+   },
+   {
+    "word": "Alpha,",
+    "start": 362.78,
+    "end": 364.22,
+    "probability": 0.0027
+   },
+   {
+    "word": "this",
+    "start": 365.76,
+    "end": 365.88,
+    "probability": 0.1661
+   },
+   {
+    "word": "is",
+    "start": 365.88,
+    "end": 366.42,
+    "probability": 0.9877
+   },
+   {
+    "word": "Star",
+    "start": 366.42,
+    "end": 366.76,
+    "probability": 0.2887,
+    "snapped_to": "oscar"
+   },
+   {
+    "word": "-Called",
+    "start": 366.76,
+    "end": 367.16,
+    "probability": 0.4047
+   },
+   {
+    "word": "Power.",
+    "start": 367.16,
+    "end": 367.64,
+    "probability": 0.5762,
+    "snapped_to": "fower"
+   },
+   {
+    "word": "Delta.",
+    "start": 374.02,
+    "end": 374.18,
+    "probability": 0.0
    }
   ],
   "first_pass": {
    "config_key": "437b8c03f291",
    "model": "small.en",
    "compute_type": "float32",
-   "asr_seconds": 496.2
+   "asr_seconds": 274.6
   },
   "second_pass": {
    "mode": "vote3@0.3",
@@ -1412,10 +1556,10 @@
    ],
    "fired": true,
    "passes": 3,
-   "asr_seconds": 496.2,
+   "asr_seconds": 274.6,
    "second_pass_asr_seconds": [
-    264.1,
-    23.7
+    175.8,
+    11.1
    ]
   },
   "guard": {
@@ -1429,22 +1573,7 @@
      374.297
     ]
    ],
-   "fallbacks": [
-    {
-     "start": 180.3,
-     "end": 374.3,
-     "reason": "timeout",
-     "resume_at": 353.44,
-     "fallback_status": "ok"
-    },
-    {
-     "start": 137.98,
-     "end": 178.58,
-     "reason": "loop",
-     "resume_at": 167.98,
-     "fallback_status": "ok"
-    }
-   ],
+   "fallbacks": [],
    "repairs": [
     {
      "start": 138.98,
@@ -1460,9 +1589,15 @@
      "start": 315.54,
      "end": 330.54,
      "words": 7
+    },
+    {
+     "start": 360.14,
+     "end": 374.02,
+     "words": 7
     }
    ],
-   "coverage": 0.543
+   "wall_s": 272.2,
+   "coverage": 0.556
   }
  },
  "broadcasts": [
@@ -1779,12 +1914,12 @@
    "broadcast_id": "113a77c6bb38@177.6",
    "type": "eam",
    "start_s": 177.58,
-   "end_s": 367.69,
+   "end_s": 374.18,
    "asr_word_span": [
     89,
-    194
+    214
    ],
-   "transcript": "All stations, all stations. This is Sockhole, Sockhole Freak Quebec Hotel Beautiful Delta Sierra Two S -ray Quebec Hotel Beautiful Delta Sierra Two, Six Five, Quebec Hotel Beautiful Delta Sierra Two, Six Five, and the Follow us. Get back. Hotel. Uniform. Delta. Sierra. Two. Roast. Bravo. Kilo. Alpha. X -ray. Three. Delta. Alpha. Victor. Alpha. Delta. Five. Delta Center. Sierra. Juliet. Victor. Two. X -ray. Charlie. Lima. Zulu. Alpha. X -ray. Get back. Hotel. Beautiful. Delta. Sierra. Two. Bravo. Bravo. Kilo. Oscar. X -ray. Victor Three. Doll. Alpha. Victor. Alpha. Delta. Five. November. Sierra. Juliet. Victor. X -ray. X -ray. X -ray. I say, circle up.",
+   "transcript": "All stations, all stations. This is Sockhole, Sockhole Freak Quebec Hotel Beautiful Delta Sierra Two S -ray Quebec Hotel Beautiful Delta Sierra Two, Six Five, Quebec Hotel Beautiful Delta Sierra Two, Six Five, and the Follow us. Get back. Hotel. Uniform. Delta. Sierra. Two. Roast. Bravo. Kilo. Alpha. X -ray. Three. Delta. Alpha. Victor. Alpha. Delta. Five. Delta Center. Sierra. Juliet. Victor. Two. X -ray. Charlie. Lima. Zulu. Alpha. X -ray. Get back. Hotel. Beautiful. Delta. Sierra. Two. Bravo. Bravo. Kilo. Oscar. X -ray. Victor Three. Doll. Alpha. Victor. Alpha. Delta. Five. November. Sierra. Juliet. Victor. X -ray. X -ray. X -ray. Delta. X -ray. X -ray. Delta. X -ray. X -ray. Delta. X -ray. X -ray. Delta. Zulu, Alpha, this is Star -Called Power. Delta.",
    "callsign": "SOCKHOLE SOCKHOLE FREAK",
    "callsigns_all": [
     {
@@ -1792,11 +1927,11 @@
      "role": "opening"
     }
    ],
-   "confidence": 0.289,
+   "confidence": 0.284,
    "confidence_detail": {
-    "mean": 0.289,
+    "mean": 0.284,
     "min": 0.0,
-    "low_count": 43,
+    "low_count": 45,
     "reads_agree_ratio": 0.0
    },
    "schema_version": "0.2",
@@ -1810,10 +1945,10 @@
    "declared_length": null,
    "length_source": "default",
    "expected_length": 30,
-   "read1": "QHDS265QHDS265HUDS2BKAX3DAVAD5DSJV2XCLZAXHDS2BBKOXV3AVAD5NSJVXXXI",
+   "read1": "QHDS265QHDS265HUDS2BKAX3DAVAD5DSJV2XCLZAXHDS2BBKOXV3AVAD5NSJVXXXDZA",
    "read2": "",
    "body": "AC4AULUKYSKAVVS4VTHFX3PDRV7DEG",
-   "body_masked": "QHDS2.....S265H.DS2.........D5.S.V.........S..B..........NS.V....",
+   "body_masked": "QHDS2.....S265H.DS2.........D5.S.V.........S..B..........NS.V......",
    "body_length": 30,
    "chars": [
     {
@@ -2329,9 +2464,25 @@
      "preamble": null
     },
     {
-     "char": "I",
-     "confidence": 0.014,
-     "read1": "I",
+     "char": "D",
+     "confidence": 0.0,
+     "read1": "D",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "Z",
+     "confidence": 0.28,
+     "read1": "Z",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "A",
+     "confidence": 0.002,
+     "read1": "A",
      "read2": null,
      "agree": false,
      "preamble": null
@@ -2340,7 +2491,7 @@
    "timing": {
     "read1": {
      "start_sec": 185.54,
-     "end_sec": 367.69
+     "end_sec": 364.22
     },
     "read2": {
      "start_sec": null,
@@ -2363,13 +2514,13 @@
    ],
    "segment": {
     "token_start": 82,
-    "token_end": 181,
+    "token_end": 186,
     "start_sec": 177.58,
-    "end_sec": 367.69,
+    "end_sec": 374.18,
     "word_start": 89,
-    "word_end": 194
+    "word_end": 214
    },
-   "body_first_pass": "QHDS265QHDS265HUDS2BKAX3DAVAD5DSJV2XCLZAXHDS2BBKOXV3AVAD5NSJVXXXI"
+   "body_first_pass": "QHDS265QHDS265HUDS2BKAX3DAVAD5DSJV2XCLZAXHDS2BBKOXV3AVAD5NSJVXXXDZA"
   }
  ]
 }
