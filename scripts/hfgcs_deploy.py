@@ -68,7 +68,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="SQLite DB to migrate (default: $HFGCS_DB, review.env, then data/hfgcs.db)")
     p.add_argument("--no-migrate", action="store_true", help="do not apply pending DB migrations")
     p.add_argument("--pip-spec", default=".[openwebrx]",
-                   help="what pip install -e reinstalls when pyproject.toml changed (default: %(default)s)")
+                   help="what pip install -e reinstalls when pyproject.toml changed (default: %(default)s, "
+                   "plus the decode extra when an hfgcs-decode unit is installed)")
     p.add_argument("--no-install-units", action="store_true",
                    help="do not copy changed deploy/systemd/*.service files over installed ones")
     p.add_argument("--unit", action="append", default=[], metavar="UNIT",

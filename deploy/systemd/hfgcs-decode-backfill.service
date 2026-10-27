@@ -1,0 +1,30 @@
+# One-shot backfill: decode every capture already in the catalog (the watch loop in
+# hfgcs-decode.service only takes captures that end after it first started). Start by hand:
+#   systemctl --user start --no-block hfgcs-decode-backfill
+#   journalctl --user -fu hfgcs-decode-backfill
+# Safe to run beside hfgcs-decode: a lock file keeps them to one clip at a time. Not enabled
+# (no [Install] section) and never started by deploy/deploy.sh.
+[Unit]
+Description=HFGCS decode backfill (one-shot, low priority)
+Documentation=file://%h/hfgcs-app/docs/decoding.md
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/hfgcs-app
+Environment=HFGCS_PYTHON=%h/hfgcs-app/.venv/bin/python
+Environment=PYTHONUNBUFFERED=1
+Environment=HF_HUB_OFFLINE=1
+EnvironmentFile=%h/.config/hfgcs/decode.env
+ExecStart=%h/hfgcs-app/deploy/bin/hfgcs-python -m decoding.worker --backfill
+KillMode=mixed
+TimeoutStartSec=infinity
+TimeoutStopSec=30
+Nice=19
+CPUWeight=10
+IOSchedulingClass=idle
+MemoryHigh=3G
+MemoryMax=4G
+MemorySwapMax=0
+TasksMax=64
+NoNewPrivileges=yes
+UMask=0022
