@@ -134,7 +134,8 @@ def test_timeout_for_clamps():
     assert cfg.timeout_for(60.0) == 600
     assert cfg.timeout_for(900.0) == 1800
     assert cfg.timeout_for(None) == 1800
-    assert w.WorkerConfig().timeout_for(900.0) == 3600   # default: 10x, at most an hour
+    assert w.WorkerConfig().timeout_for(900.0) == 7200   # 10x, at most 2 h (3 passes x 2x x 900 s)
+    assert w.WorkerConfig().timeout_for(186.0) == 1860
 
 
 # -- end to end: gate -> decode -> load-decodes, idempotent ----------------------------------------
@@ -325,3 +326,52 @@ def test_unit_files_are_low_priority_and_use_the_decode_env():
     assert "Nice=19" in oneshot and "CPUWeight=10" in oneshot
     env = (ROOT / "deploy" / "env" / "decode.env.example").read_text()
     assert "HFGCS_DB=" in env and "HFGCS_DECODE_MODEL=small.en" in env
+
+
+def test_decoder_version_bump_makes_clips_due_again(app, monkeypatch):
+    """A decoding release (``decoding.__version__``) re-decodes and re-loads every decoded clip once;
+    no_voice verdicts stay (the gate did not change); the watch loop only takes captures after
+    watch_from, so the backlog needs one --backfill (hfgcs-decode-backfill.service)."""
+    import decoding
+
+    add_capture(app, "HFGCS_8992kHz_old", 0)
+    add_capture(app, "HFGCS_8992kHz_silent", 1)
+    add_capture(app, "HFGCS_4724kHz_new", 60, freq=4724.0)
+    cfg = cfg_for(app)
+    assert w.Worker(cfg).backfill() == 0
+    old_version = cfg.decoder_version()
+    st = w.State(cfg.state_file).load()
+    st.set_watch_from(z(T0 + timedelta(minutes=30)))
+    st.save()
+    caps = w.read_catalog(cfg.catalog)
+    assert w.pending(caps, w.State(cfg.state_file).load(), cfg, backfill=True) == []
+    asr_before = len([x for x in fake_log(app) if x["kind"] == "asr"])
+
+    bumped = decoding.__version__ + "+bump"
+    monkeypatch.setattr(decoding, "__version__", bumped)
+    monkeypatch.setenv("FAKE_DECODING_VERSION", bumped)
+    assert cfg.decoder_version() != old_version and f"decoding/{bumped};" in cfg.decoder_version()
+    st = w.State(cfg.state_file).load()
+    due = {c.name: a for c, a in w.pending(caps, st, cfg, backfill=True)}
+    assert due == {"HFGCS_8992kHz_old.wav": "decode", "HFGCS_4724kHz_new.wav": "decode"}
+    assert [c.name for c, _ in w.pending(caps, st, cfg, backfill=False)] == ["HFGCS_4724kHz_new.wav"]
+
+    assert w.Worker(cfg).backfill() == 0
+    assert len([x for x in fake_log(app) if x["kind"] == "asr"]) == asr_before + 2
+    st = w.State(cfg.state_file).load()
+    by_file = {Path(r["file"]).name: r for r in st.clips.values()}
+    for name in ("HFGCS_8992kHz_old.wav", "HFGCS_4724kHz_new.wav"):
+        assert by_file[name]["decoder_version"] == cfg.decoder_version() and by_file[name]["loaded"]
+        doc = json.loads((app / "recordings" / (name + ".decode.json")).read_text())
+        assert doc["decoder_version"] == cfg.decoder_version()
+    assert by_file["HFGCS_8992kHz_silent.wav"]["status"] == "no_voice"
+    assert w.pending(caps, st, cfg, backfill=True) == []
+
+
+def test_worker_uses_the_decoding_default_compute_type():
+    """The worker sets only model and threads; compute type (float32 since 0.3) comes from AsrConfig."""
+    from decoding.asr import AsrConfig
+
+    asr = w.WorkerConfig(model="small.en", cpu_threads=3).decode_config().asr
+    assert asr.compute_type == AsrConfig().compute_type == "float32"
+    assert (asr.model, asr.cpu_threads) == ("small.en", 3)

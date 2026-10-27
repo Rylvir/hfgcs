@@ -500,7 +500,7 @@ Per capture, one at a time (a lock file in the state dir also serialises a backf
 3. **Decode** in a child process (`decode_recording`: `small.en`, parser, vote3 second pass when the reads
    disagree) writing the sidecar and a `decodes.jsonl` line, as `python -m decoding.run` does. The child runs
    in its own process group under a **wall-time cap** of `--timeout-factor` (10) x the clip length, clamped to
-   `--timeout-min` (120 s, covers model load) .. `--timeout-max` (3600 s); over the cap the group is SIGTERMed,
+   `--timeout-min` (120 s, covers model load) .. `--timeout-max` (7200 s: decoding 0.3 bounds each ASR pass at `max_rtf` 2x the clip, and the vote adds two passes, so a 900 s clip can legitimately take ~6x = 5400 s plus model load); over the cap the group is SIGTERMed,
    then SIGKILLed, and the clip is recorded as `timeout`. Failures and timeouts are tried `--max-attempts` (2)
    times in all; `--retry-failed` tries them again.
 4. **Load**: `hfgcs_db.py --db $HFGCS_DB load-decodes <sidecar>`. load-decodes keeps rows a person edited or
