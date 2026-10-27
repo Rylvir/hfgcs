@@ -114,3 +114,30 @@ def segment_is_loop(seg: dict, max_words_per_s: float) -> bool:
             if units and max(units.count(u) for u in set(units)) * n >= 0.6 * len(norm):
                 return True
     return False
+
+
+def collapse_repeats(words: Sequence[dict], max_ngram: int = 4, max_repeats: int = 3) -> list[dict]:
+    """Cut any 1..max_ngram word unit repeated more than ``max_repeats`` times
+    in a row to one occurrence (the dict-word twin of tokens.drop_repetition_loops),
+    so a looping segment's real words can be kept."""
+    out = list(words)
+
+    def norm(w):
+        return str(w.get("word", "")).strip(" ,.?!-").lower()
+
+    for size in range(1, max_ngram + 1):
+        i, res = 0, []
+        while i < len(out):
+            gram = [norm(w) for w in out[i : i + size]]
+            j, reps = i + size, 1
+            while len(gram) == size and [norm(w) for w in out[j : j + size]] == gram:
+                reps += 1
+                j += size
+            if reps > max_repeats:
+                res.extend(out[i : i + size])
+                i = j
+            else:
+                res.append(out[i])
+                i += 1
+        out = res
+    return out

@@ -71,7 +71,7 @@ class FakeModel:
                 self.tick()
                 looping = self.loop_at is not None and t >= self.loop_at
                 if looping and (vad_filter is False or not self.loop_only_without_vad):
-                    yield _seg(t, ["Delta"] * 60, step=0.1)  # 60 words in 6 s
+                    yield _seg(t, [f"W{k}" for k in range(60)], step=0.1)  # 60 words in 6 s
                 else:
                     yield _seg(t, PHON)
                 t += 10.0
@@ -149,6 +149,21 @@ def test_loop_resumes_with_fallback():
     assert m.calls[1] == {"dur": 60.0, "vad_filter": True, "cond": False}
     assert len(r["words"]) == 6 * 8 + 6 * 8  # 6 good segments + 6 from the fallback, no loop words
     assert all(len(s["text"].split()) == 8 for s in r["segments"])
+
+
+def test_repeated_word_loop_is_collapsed_not_dropped():
+    """'Six Six Six ...' inside a segment: the repeats are cut to one and the
+    segment's other words are kept, with no fallback decode."""
+
+    class Rep(FakeModel):
+        def transcribe(self, piece, vad_filter=False, vad_parameters=None, **kw):
+            self.calls.append(1)
+            return iter([_seg(0.0, ["Alpha", "Bravo"] + ["Six"] * 40, step=0.2)]), None
+
+    m = Rep()
+    r = _tr(m, gap_repair_s=None).transcribe_pcm(_noise(20.0))
+    assert [w["word"] for w in r["words"]] == ["Alpha", "Bravo", "Six"]
+    assert r["guard"]["fallbacks"] == [] and len(m.calls) == 1
 
 
 def test_wall_time_cap(monkeypatch):

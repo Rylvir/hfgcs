@@ -16,7 +16,15 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Optional, Sequence
 
-from .coverage import active_fraction, frame_rms, segment_is_loop, window_bounds, word_coverage, word_gaps
+from .coverage import (
+    active_fraction,
+    collapse_repeats,
+    frame_rms,
+    segment_is_loop,
+    window_bounds,
+    word_coverage,
+    word_gaps,
+)
 
 NATO_WORDS = (
     "Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India Juliet Kilo Lima Mike "
@@ -400,7 +408,13 @@ class Transcriber:
         for s in segs:  # a generator: breaking out stops decoding
             d = self._segment_dict(s, start)
             n_words += len(d["words"])
-            if segment_is_loop(d, cfg.max_words_per_s) or n_words > cfg.max_words_per_s * max(dur, 1.0) + 10:
+            if segment_is_loop(d, cfg.max_words_per_s):
+                kept = collapse_repeats(d["words"])  # salvage the words before/around the loop
+                d = {**d, "words": kept, "text": " ".join(w["word"] for w in kept), "collapsed": True}
+                if segment_is_loop(d, cfg.max_words_per_s):
+                    return out, "loop", max(start, min(d["start"], end))
+                n_words = sum(len(x["words"]) for x in out) + len(kept)
+            if n_words > cfg.max_words_per_s * max(dur, 1.0) + 10:
                 return out, "loop", max(start, min(d["start"], end))
             out.append(d)
             if deadline is not None and time.monotonic() > deadline:
@@ -462,6 +476,11 @@ class Transcriber:
             for g0, g1 in word_gaps(words, duration, c.gap_repair_s):
                 if active_fraction(rms, g0, g1) < 0.5:
                     continue
+                if any(
+                    f["resume_at"] <= g0 + 1.0 and f["end"] >= g1 - 1.0 and "fallback_status" in f
+                    for f in guard["fallbacks"]
+                ):
+                    continue  # already decoded twice (first pass + fallback)
                 if self._out_of_budget():
                     guard["repairs"].append(
                         {"start": g0, "end": g1, "words": 0, "skipped": "wall-time budget spent"}
