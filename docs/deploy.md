@@ -135,7 +135,7 @@ then on every recorder writes its state file and plain `deploy/deploy.sh` is eno
 `hfgcs-decode.service` runs `python -m decoding.worker`: it watches `hfgcs_catalog.jsonl`, voice-gates each new
 capture, decodes it with `small.en` plus the vote pass in a child process under a wall-time cap, and loads the
 result with `hfgcs_db.py load-decodes`, so it shows on the review page. Details: docs/decoding.md "Decode
-service". It runs at `Nice=19`, `CPUWeight=10`, `IOSchedulingClass=idle`, `MemoryHigh=3G`/`MemoryMax=4G`, and
+service". It runs at `Nice=19`, `CPUWeight=10`, `IOSchedulingClass=idle`, `MemoryHigh=4G`/`MemoryMax=5G` (float32 small.en peaks at ~3.1 GiB on a 900 s clip), and
 it never touches a recorder, OpenWebRX or a KiwiSDR.
 
 ### Adding it on hilltop (no recorder restart)

@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import os
 import sys
 import time
@@ -98,9 +99,7 @@ def write_document(doc: dict, audio: Path, jsonl: Optional[Path]) -> Path:
     side = sidecar_path(audio)
     _write_atomic(side, json.dumps(doc, indent=1, ensure_ascii=False) + "\n")
     if jsonl is not None:
-        jsonl.parent.mkdir(parents=True, exist_ok=True)
-        with open(jsonl, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(doc, ensure_ascii=False, separators=(",", ":")) + "\n")
+        _append_locked(jsonl, json.dumps(doc, ensure_ascii=False, separators=(",", ":")) + "\n")
     return side
 
 
@@ -159,7 +158,44 @@ def decode_recording(
     return doc
 
 
+EXIT_OK, EXIT_FAILED, EXIT_USAGE = 0, 1, 2
+log = logging.getLogger("decoding.run")
+
+
+def _append_locked(path: Path, line: str) -> None:
+    """Append one line under an exclusive lock (several workers may share decodes.jsonl)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as fh:
+        try:
+            import fcntl
+
+            fcntl.flock(fh, fcntl.LOCK_EX)
+        except ImportError:  # not on POSIX
+            pass
+        fh.write(line)
+        fh.flush()
+
+
+def _summary(doc: dict, wall: float) -> str:
+    asr = doc.get("asr") or {}
+    g = asr.get("guard") or {}
+    dur = doc.get("duration_s") or 0.0
+    kinds = ", ".join(f"{b['type']}@{b['start_s']}" for b in doc["broadcasts"])
+    return (
+        f"{len(doc['broadcasts'])} broadcast(s) [{kinds}] dur={dur:.1f}s wall={wall:.1f}s "
+        f"rtf={(wall / dur if dur else 0):.2f} words={len(asr.get('words') or [])} "
+        f"coverage={g.get('coverage')} windows={len(g.get('windows') or [])} "
+        f"fallbacks={[f['reason'] for f in g.get('fallbacks') or []]} "
+        f"repairs={sum(r['words'] for r in g.get('repairs') or [])}w "
+        f"second_pass={(asr.get('second_pass') or {}).get('fired')}"
+    )
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
+    """Worker entry point. Exit code: 0 = every recording decoded or already up to
+    date, 1 = at least one missing or failed (the rest were still processed),
+    2 = bad arguments or an unreadable input list. Progress goes to stderr
+    (logging); the final ``decoded N, up to date N, failed N`` line to stdout."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("inputs", nargs="+", type=Path, help="catalog .jsonl files and/or audio files")
     ap.add_argument("--jsonl", type=Path, help="decodes.jsonl to append to (default: beside the input)")
@@ -168,41 +204,77 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--asr-cache", type=Path, help="cache ASR output here (evaluate.py layout)")
     ap.add_argument("--day-callsign", action="append", default=[], help="today's callsigns (ASR prompt)")
     ap.add_argument("--model", help="override AsrConfig.model (e.g. distil-small.en)")
-    ap.add_argument("--cpu-threads", type=int, help="override AsrConfig.cpu_threads")
+    ap.add_argument(
+        "--cpu-threads", type=int, help="override AsrConfig.cpu_threads (output does not depend on it)"
+    )
     ap.add_argument("--no-second-pass", action="store_true", help="disable the vote3 second pass")
+    ap.add_argument("--max-rtf", type=float, help="wall-time cap per ASR window, x its duration (default 2)")
+    ap.add_argument(
+        "--nice", type=int, default=10, help="raise the process niceness by this much (default 10; 0 = off)"
+    )
+    ap.add_argument("--limit", type=int, help="decode at most this many recordings (skips do not count)")
+    ap.add_argument("-v", "--verbose", action="store_true", help="debug logging")
     args = ap.parse_args(argv)
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        stream=sys.stderr,
+    )
+    if args.nice > 0 and hasattr(os, "nice"):
+        os.nice(args.nice)  # a background worker must not starve the recorders
+    for p in args.inputs:
+        if p.suffix == ".jsonl" and not p.is_file():
+            log.error("input list not found: %s", p)
+            return EXIT_USAGE
 
     cfg = DecodeConfig()
     if args.model:
         cfg.asr.model = args.model
     if args.cpu_threads:
         cfg.asr.cpu_threads = args.cpu_threads
+    if args.max_rtf is not None:
+        cfg.asr.max_rtf = args.max_rtf or None
     if args.no_second_pass:
         cfg.second_pass = False
     decoder = Decoder(cfg)
     if args.asr_cache:
         decoder._transcribe = cached_transcriber(decoder, args.asr_cache)
+    from .pipeline import decoder_version
+
+    log.info(
+        "decoder %s, %d thread(s), nice +%d", decoder_version(cfg), cfg.asr.cpu_threads, max(args.nice, 0)
+    )
     n = skipped = failed = 0
-    for audio, entry, default_dir in iter_inputs(args.inputs):
+    t_all = time.monotonic()
+    try:
+        inputs = list(iter_inputs(args.inputs))
+    except (OSError, ValueError) as e:
+        log.error("cannot read inputs: %s", e)
+        return EXIT_USAGE
+    for audio, entry, default_dir in inputs:
+        if args.limit is not None and n >= args.limit:
+            break
         jsonl = None if args.no_jsonl else (args.jsonl or default_dir / "decodes.jsonl")
         if not audio.is_file():
-            print(f"missing audio: {audio}", file=sys.stderr)
+            log.error("missing audio: %s", audio)
             failed += 1
             continue
+        t0 = time.monotonic()
         try:
             doc = decode_recording(decoder, audio, entry, args.day_callsign, jsonl, args.force)
-        except Exception as e:  # keep going over a catalog; report at the end
-            print(f"failed: {audio}: {e}", file=sys.stderr)
+        except Exception:  # keep going over a catalog; report at the end
+            log.exception("failed: %s", audio)
             failed += 1
             continue
         if doc is None:
+            log.debug("up to date: %s", audio.name)
             skipped += 1
             continue
         n += 1
-        kinds = ", ".join(f"{b['type']}@{b['start_s']}" for b in doc["broadcasts"])
-        print(f"{audio.name}: {len(doc['broadcasts'])} broadcast(s) [{kinds}]")
+        log.info("%s: %s", audio.name, _summary(doc, time.monotonic() - t0))
+    log.info("done in %.0fs", time.monotonic() - t_all)
     print(f"decoded {n}, up to date {skipped}, failed {failed}")
-    return 1 if failed else 0
+    return EXIT_FAILED if failed else EXIT_OK
 
 
 if __name__ == "__main__":

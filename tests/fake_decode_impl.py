@@ -8,6 +8,13 @@ from pathlib import Path
 
 from decode_fixtures import eam_text, words
 
+# Simulate a decoder release inside the child: decoding.pipeline.decoder_version reads
+# decoding.__version__ at call time, so the child's documents carry the bumped version.
+if os.environ.get("FAKE_DECODING_VERSION"):
+    import decoding
+
+    decoding.__version__ = os.environ["FAKE_DECODING_VERSION"]
+
 
 def _log(kind, audio):
     path = os.environ.get("FAKE_DECODE_LOG")

@@ -28,11 +28,13 @@ TimeoutStopSec=30
 Nice=19
 CPUWeight=10
 IOSchedulingClass=idle
-# Measured: small.en int8 + the vote pass peaked at 1.6 GB RSS on a 96 s clip; float32
-# (decoding-fixes) and 15-minute clips need more. MemoryHigh throttles first; MemoryMax is the
-# hard stop (a killed child is recorded as failed and retried). hilltop has ~12 GB free.
-MemoryHigh=3G
-MemoryMax=4G
+# Measured: small.en int8 + the vote pass peaked at 1.6 GB RSS on a 96 s clip. decoding 0.3 runs
+# float32 (weights ~4x int8): the decode child peaked at 2.6 GiB RSS on a 186 s clip and 3.1 GiB on a
+# 900 s clip (3 threads), and 3.3 GB at 8 threads with the vote firing. MemoryHigh throttles first
+# (so it sits above the peak); MemoryMax is the hard stop (a killed child is recorded as failed and
+# retried). hilltop has 16 GB, ~11 GB available.
+MemoryHigh=4G
+MemoryMax=5G
 MemorySwapMax=0
 TasksMax=64
 NoNewPrivileges=yes

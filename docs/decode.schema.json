@@ -59,6 +59,16 @@
         "day_callsigns": {"type": "array", "items": {"type": "string"}},
         "duration_s": {"type": ["number", "null"]},
         "asr_seconds": {"type": ["number", "null"]},
+        "guard": {
+          "type": ["object", "null"],
+          "description": "long-recording guards (decoding/coverage.py): windows [[start, end], ...]; fallbacks [{start, end, reason: loop|timeout, resume_at, fallback_status}]; repairs [{start, end, words}]; coverage = word-span seconds / duration. null for ASR output cached before decoding 0.3",
+          "properties": {
+            "windows": {"type": "array"},
+            "fallbacks": {"type": "array"},
+            "repairs": {"type": "array"},
+            "coverage": {"type": ["number", "null"]}
+          }
+        },
         "text": {"type": "string"},
         "segments": {
           "type": "array",

@@ -107,7 +107,7 @@ class WorkerConfig:
     min_speech_s: float = 1.0
     timeout_factor: float = 10.0
     timeout_min_s: float = 120.0
-    timeout_max_s: float = 3600.0
+    timeout_max_s: float = 7200.0  # >= 3 passes x max_rtf 2 x 900 s clips + load (decoding 0.3)
     max_attempts: int = 2
     retry_failed: bool = False
     poll_s: float = 30.0
@@ -822,8 +822,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="wall-time cap per clip = factor x clip length (default 10)")
     ap.add_argument("--timeout-min", type=float, default=_env("HFGCS_DECODE_TIMEOUT_MIN_S", 120.0),
                     help="lower bound of the cap, s (default 120: model load + short clips)")
-    ap.add_argument("--timeout-max", type=float, default=_env("HFGCS_DECODE_TIMEOUT_MAX_S", 3600.0),
-                    help="upper bound of the cap, s (default 3600)")
+    ap.add_argument("--timeout-max", type=float, default=_env("HFGCS_DECODE_TIMEOUT_MAX_S", 7200.0),
+                    help="upper bound of the cap, s (default 7200: 3 passes x 2x a 900 s clip)")
     ap.add_argument("--max-attempts", type=int, default=_env("HFGCS_DECODE_MAX_ATTEMPTS", 2),
                     help="tries per clip for failures/timeouts (default 2)")
     ap.add_argument("--retry-failed", action="store_true", help="try failed/timed-out clips again")

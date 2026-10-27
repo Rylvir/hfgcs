@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from decoding import parse_transcript, tokenize
+from decoding import __version__, parse_transcript, tokenize
 from decoding.output import BROADCAST_TYPES, broadcast_id, build_document
 from decoding.pipeline import DecodeConfig, Decoder, decoder_version
 from decoding.run import decode_recording, iter_inputs, recording_section, sidecar_path
@@ -201,7 +201,8 @@ def test_top_level_fields_and_versions():
     assert list(doc)[:7] == ["schema_version", "decoder_version", "recording", "duration_s", "decoded_at",
                              "asr", "broadcasts"]  # fmt: skip
     cfg = DecodeConfig()
-    assert doc["decoder_version"] == f"decoding/0.2.0;parser=0.2;asr={cfg.asr.key()};second_pass=vote3@0.3"
+    want = f"decoding/{__version__};parser=0.2;asr={cfg.asr.key()};second_pass=vote3@0.3"
+    assert doc["decoder_version"] == want
     assert doc["asr"]["decoder_version"] == doc["decoder_version"]
     assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", doc["decoded_at"])
     assert decoder_version(DecodeConfig(second_pass=False)).endswith(";second_pass=off")
@@ -361,3 +362,17 @@ def test_committed_sample_fixture():
     assert doc["recording"]["schema"] == 2 and doc["recording"]["receiver_id"] == "eval-synthetic"
     assert len({b["broadcast_id"] for b in doc["broadcasts"]}) == len(doc["broadcasts"])
     assert all(b["broadcast_id"].startswith(doc["recording"]["sha256"][:12] + "@") for b in doc["broadcasts"])
+
+
+def test_run_main_exit_codes(tmp_path, capsys):
+    """Worker contract: 2 = unreadable input list, 1 = some recording missing or
+    failed (the rest still processed), 0 = all decoded or up to date."""
+    from decoding.run import main
+
+    assert main([str(tmp_path / "nope.jsonl"), "--nice", "0"]) == 2
+    cat = tmp_path / "catalog.jsonl"
+    cat.write_text(json.dumps({"file": "missing.wav", "sha256": "0" * 64}) + "\n")
+    assert main([str(cat), "--nice", "0"]) == 1
+    assert capsys.readouterr().out.strip().endswith("decoded 0, up to date 0, failed 1")
+    cat.write_text("")
+    assert main([str(cat), "--nice", "0"]) == 0
