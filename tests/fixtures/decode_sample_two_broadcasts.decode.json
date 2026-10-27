@@ -1,6 +1,6 @@
 {
  "schema_version": "1.0",
- "decoder_version": "decoding/0.2.0;parser=0.2;asr=5bfe156c6443;second_pass=vote3@0.3",
+ "decoder_version": "decoding/0.3.0;parser=0.2;asr=437b8c03f291;second_pass=vote3@0.3",
  "recording": {
   "path": "/workspace/hfgcs-data/eval/samples/HFGCS_11175kHz_20260923T173253Z_eval-synthetic.wav",
   "sha256": "113a77c6bb383291d114bc845d206919462d04f79e4482cbf495ff1aa7b07a43",
@@ -22,803 +22,1371 @@
   "notes": "SYNTHETIC: gold eam-356f1a01 (EAM) + 2 s silence + gold eam-86d80b13 (EAM), concatenated; missileer.watch CC0-1.0"
  },
  "duration_s": 374.297,
- "decoded_at": "2026-10-26T22:30:22Z",
+ "decoded_at": "2026-10-27T00:07:48Z",
  "asr": {
   "model": "small.en",
-  "compute_type": "int8",
-  "config_key": "5bfe156c6443",
-  "decoder_version": "decoding/0.2.0;parser=0.2;asr=5bfe156c6443;second_pass=vote3@0.3",
+  "compute_type": "float32",
+  "config_key": "437b8c03f291",
+  "decoder_version": "decoding/0.3.0;parser=0.2;asr=437b8c03f291;second_pass=vote3@0.3",
   "day_callsigns": [],
   "duration_s": 374.297125,
-  "asr_seconds": 173.4,
-  "text": "Four Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform Lima, stand by. Message follows. Alpha Four Alpha Uniform Lima Uniform Kilo Yankee Sierra Kilo India Big Door Big Door Kilo Hotel Foxtrot X-ray Tree Papa Delta Romeo Team R. Seven Delta Echo Golf Alpha Uniform Lima Uniform Kilo Yankee Sierra Kilo India Big Door Big Door Sierra Four Big Door Tango Hotel Fo Foxtrot X-ray Tree Papa Delta Romeo Big Door Seven Delta Echo Golf This is Cupway out. All stations, Five Delta Center Sierra Juliet Victor , Sierra, Juliet, Victor, Tesco, Nino, Rishi, Charlie, Lima, N",
+  "asr_seconds": 496.2,
+  "text": "Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform Lima Uniform Kilo Yankee Sierra Kilo India Victor Victor Sierra Four. Foxtrot X-ray Tree Papa Delta Romeo Keep to it. Seven Delta Echo Golf. I say again. Alpha Charlie Four Alpha Uniform Lima Uniform Kilo Yankee Sierra Kilo India Victor Sierra Four. Victor Tango Hotel Foxtrot X-ray Tree Papa Delta Romeo Victor Seven Delta Echo Golf. This is Cupway out. Out. All stations, all stations. This is Sockhole, Sockhole Freak Quebec Hotel Beautiful Delta Sierra Two S -ray Quebec Hotel Beautiful Delta Sierra Two, Six Five, Quebec Hotel Beautiful Delta Sierra Two, Six Five, and the Follow us. Get back. Hotel. Uniform. Delta. Sierra. Two. Roast. Bravo. Kilo. Alpha. X-ray. Three. Delta. Alpha. Victor. Alpha. Delta. Five. Delta Center. Sierra. Juliet. Victor. Two. X-ray. Charlie. Lima. Zulu. Alpha. X-ray. Get back. Hotel. Beautiful. Delta. Sierra. Two. Bravo. Bravo. Kilo. Oscar. X -ray. Victor Three. Doll. Alpha. Victor. Alpha. Delta. Five. November. Sierra. Juliet. Victor. X-ray. X-ray. X-ray. I say, circle up.",
   "segments": [
    {
-    "start": 0.0,
-    "end": 16.48,
-    "text": "Four Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform",
-    "avg_logprob": -0.5471018632253011,
-    "no_speech_prob": 0.0042023384012281895,
+    "start": 1.0,
+    "end": 30.68,
+    "text": "Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform Lima, stand by.",
+    "avg_logprob": -0.26748437782128653,
+    "no_speech_prob": 0.11758644878864288,
     "word_span": [
      0,
-     10
+     20
     ]
    },
    {
-    "start": 16.48,
-    "end": 36.36,
-    "text": "Lima, stand by. Alpha Charlie Four Alpha Uniform Lima, stand by. Message follows. Alpha",
-    "avg_logprob": -0.2796808014745298,
-    "no_speech_prob": 0.027547307312488556,
+    "start": 36.06,
+    "end": 58.66,
+    "text": "Alpha Charlie Four Alpha Uniform Lima Uniform Kilo Yankee Sierra Kilo India Victor Victor Sierra Four.",
+    "avg_logprob": -0.36238243528034375,
+    "no_speech_prob": 0.5990610718727112,
     "word_span": [
-     11,
-     24
+     21,
+     36
     ]
    },
    {
-    "start": 37.8,
-    "end": 56.34,
-    "text": "Four Alpha Uniform Lima Uniform Kilo Yankee Sierra Kilo India Big Door Big Door",
-    "avg_logprob": -0.5058708935976028,
-    "no_speech_prob": 0.11685489118099213,
+    "start": 63.7,
+    "end": 80.84,
+    "text": "Foxtrot X-ray Tree Papa Delta Romeo Keep to it. Seven Delta Echo Golf.",
+    "avg_logprob": -0.4752089562623397,
+    "no_speech_prob": 0.5873083472251892,
     "word_span": [
-     25,
-     38
+     37,
+     50
     ]
    },
    {
-    "start": 60.4,
-    "end": 80.9,
-    "text": "Kilo Hotel Foxtrot X-ray Tree Papa Delta Romeo Team R. Seven Delta Echo Golf",
-    "avg_logprob": -0.9074264142824255,
-    "no_speech_prob": 0.08312869071960449,
+    "start": 80.84,
+    "end": 109.84,
+    "text": "I say again. Alpha Charlie Four Alpha Uniform Lima Uniform Kilo Yankee Sierra Kilo India Victor Sierra Four.",
+    "avg_logprob": -0.1502695655822754,
+    "no_speech_prob": 0.5739709138870239,
     "word_span": [
-     39,
-     53
-    ]
-   },
-   {
-    "start": 90.88,
-    "end": 110.98,
-    "text": "Alpha Uniform Lima Uniform Kilo Yankee Sierra Kilo India Big Door Big Door Sierra Four",
-    "avg_logprob": -0.5079375562213716,
-    "no_speech_prob": 0.5716592669487,
-    "word_span": [
-     54,
+     51,
      68
     ]
    },
    {
-    "start": 111.98,
-    "end": 117.12,
-    "text": "Big Door Tango Hotel Fo",
-    "avg_logprob": -0.45579026852335247,
-    "no_speech_prob": 0.2964116632938385,
+    "start": 111.84,
+    "end": 133.44,
+    "text": "Victor Tango Hotel Foxtrot X-ray Tree Papa Delta Romeo Victor Seven Delta Echo Golf.",
+    "avg_logprob": -0.20604165581365427,
+    "no_speech_prob": 0.4476867914199829,
     "word_span": [
      69,
-     73
+     83
     ]
    },
    {
-    "start": 117.12,
-    "end": 133.38,
-    "text": "Foxtrot X-ray Tree Papa Delta Romeo Big Door Seven Delta Echo Golf",
-    "avg_logprob": -0.45579026852335247,
-    "no_speech_prob": 0.2964116632938385,
-    "word_span": [
-     74,
-     86
-    ]
-   },
-   {
-    "start": 133.38,
+    "start": 133.44,
     "end": 138.98,
     "text": "This is Cupway out.",
-    "avg_logprob": -0.9317332373725044,
-    "no_speech_prob": 0.0686708465218544,
+    "avg_logprob": -0.4992167154947917,
+    "no_speech_prob": 0.35820651054382324,
     "word_span": [
-     87,
-     90
+     84,
+     87
     ]
    },
    {
-    "start": 204.52,
-    "end": 207.32,
-    "text": "All stations,",
-    "avg_logprob": -0.9250041757311139,
-    "no_speech_prob": 0.6921523213386536,
+    "start": 163.12,
+    "end": 164.52,
+    "text": "Out.",
+    "avg_logprob": -0.491060733795166,
+    "no_speech_prob": 0.1311665028333664,
     "word_span": [
-     91,
+     88,
+     88
+    ]
+   },
+   {
+    "start": 177.58,
+    "end": 179.92,
+    "text": "All stations, all stations.",
+    "avg_logprob": -0.22346562809414333,
+    "no_speech_prob": 0.28361767530441284,
+    "word_span": [
+     89,
      92
     ]
    },
    {
-    "start": 267.32,
-    "end": 277.32,
-    "text": "Five Delta Center Sierra Juliet Victor",
-    "avg_logprob": -0.9627572206350473,
-    "no_speech_prob": 0.8005605340003967,
+    "start": 179.92,
+    "end": 209.18,
+    "text": "This is Sockhole, Sockhole Freak Quebec Hotel Beautiful Delta Sierra Two S -ray Quebec Hotel Beautiful Delta Sierra",
+    "avg_logprob": -0.6142985362272996,
+    "no_speech_prob": 0.007238190621137619,
     "word_span": [
      93,
-     98
+     110
     ]
    },
    {
-    "start": 277.32,
-    "end": 278.32,
-    "text": ",",
-    "avg_logprob": -0.9627572206350473,
-    "no_speech_prob": 0.8005605340003967,
-    "word_span": null
+    "start": 210.18,
+    "end": 227.74,
+    "text": "Two, Six Five, Quebec Hotel Beautiful Delta Sierra Two, Six Five, and the",
+    "avg_logprob": -1.0510968436365542,
+    "no_speech_prob": 0.0034549240954220295,
+    "word_span": [
+     111,
+     123
+    ]
    },
    {
-    "start": 343.66,
-    "end": 362.0,
-    "text": "Sierra, Juliet, Victor, Tesco, Nino, Rishi, Charlie, Lima, N",
-    "avg_logprob": -0.9970334509144658,
-    "no_speech_prob": 0.00034795707324519753,
+    "start": 226.92,
+    "end": 250.24,
+    "text": "Follow us. Get back. Hotel. Uniform. Delta. Sierra. Two. Roast. Bravo. Kilo. Alpha. X-ray.",
+    "avg_logprob": -0.6406925092725193,
+    "no_speech_prob": 0.009837035089731216,
     "word_span": [
-     99,
-     107
+     124,
+     138
+    ]
+   },
+   {
+    "start": 254.24,
+    "end": 281.34,
+    "text": "Three. Delta. Alpha. Victor. Alpha. Delta. Five. Delta Center. Sierra. Juliet. Victor. Two. X-ray.",
+    "avg_logprob": -0.44199648770419037,
+    "no_speech_prob": 0.6273844838142395,
+    "word_span": [
+     139,
+     153
+    ]
+   },
+   {
+    "start": 286.46,
+    "end": 315.54,
+    "text": "Charlie. Lima. Zulu. Alpha. X-ray. Get back. Hotel. Beautiful. Delta. Sierra. Two. Bravo. Bravo.",
+    "avg_logprob": -0.2170131307314424,
+    "no_speech_prob": 0.6162381172180176,
+    "word_span": [
+     154,
+     168
+    ]
+   },
+   {
+    "start": 314.54,
+    "end": 331.42,
+    "text": "Kilo. Oscar. X -ray. Victor Three. Doll.",
+    "avg_logprob": -0.799858984739884,
+    "no_speech_prob": 0.007771690376102924,
+    "word_span": [
+     169,
+     175
+    ]
+   },
+   {
+    "start": 330.54,
+    "end": 353.44,
+    "text": "Alpha. Victor. Alpha. Delta. Five. November. Sierra. Juliet. Victor. X-ray. X-ray. X-ray.",
+    "avg_logprob": -0.265250967705951,
+    "no_speech_prob": 0.765653133392334,
+    "word_span": [
+     176,
+     190
+    ]
+   },
+   {
+    "start": 365.33,
+    "end": 367.69,
+    "text": "I say, circle up.",
+    "avg_logprob": -0.9934445487128364,
+    "no_speech_prob": 0.06635572016239166,
+    "word_span": [
+     191,
+     194
     ]
    }
   ],
   "words": [
    {
-    "word": "Four",
-    "start": 0.0,
-    "end": 0.56,
-    "probability": 0.0879
-   },
-   {
     "word": "Alpha",
-    "start": 0.56,
-    "end": 2.14,
-    "probability": 0.2891
+    "start": 1.0,
+    "end": 2.1,
+    "probability": 0.4851
    },
    {
     "word": "Uniform",
-    "start": 2.14,
-    "end": 3.68,
-    "probability": 0.2082
+    "start": 2.1,
+    "end": 3.72,
+    "probability": 0.1384
    },
    {
     "word": "Lima,",
-    "start": 3.68,
-    "end": 5.08,
-    "probability": 0.1196
+    "start": 3.72,
+    "end": 4.92,
+    "probability": 0.205
    },
    {
     "word": "stand",
-    "start": 6.18,
+    "start": 6.2,
     "end": 6.32,
-    "probability": 0.1894
+    "probability": 0.2401
    },
    {
     "word": "by.",
     "start": 6.32,
     "end": 8.58,
-    "probability": 0.9898
+    "probability": 0.9913
    },
    {
     "word": "Alpha",
-    "start": 9.18,
-    "end": 10.58,
-    "probability": 0.9312
+    "start": 9.22,
+    "end": 10.62,
+    "probability": 0.9277
    },
    {
     "word": "Charlie",
-    "start": 10.58,
-    "end": 11.98,
-    "probability": 0.9609
+    "start": 10.62,
+    "end": 12.02,
+    "probability": 0.9534
    },
    {
     "word": "Four",
-    "start": 11.98,
-    "end": 13.54,
-    "probability": 0.6162
+    "start": 12.02,
+    "end": 13.52,
+    "probability": 0.1456
    },
    {
     "word": "Alpha",
-    "start": 13.54,
-    "end": 15.16,
-    "probability": 0.9661
+    "start": 13.52,
+    "end": 15.14,
+    "probability": 0.5734
    },
    {
     "word": "Uniform",
-    "start": 15.16,
-    "end": 16.48,
-    "probability": 0.7579
+    "start": 15.14,
+    "end": 16.56,
+    "probability": 0.7651
    },
    {
     "word": "Lima,",
-    "start": 16.48,
-    "end": 17.68,
-    "probability": 0.0
+    "start": 16.56,
+    "end": 18.0,
+    "probability": 0.9936
    },
    {
     "word": "stand",
-    "start": 18.9,
-    "end": 19.14,
-    "probability": 0.4296
+    "start": 18.82,
+    "end": 19.16,
+    "probability": 0.9727
    },
    {
     "word": "by.",
-    "start": 19.14,
-    "end": 19.74,
-    "probability": 0.9946
+    "start": 19.16,
+    "end": 19.54,
+    "probability": 0.9962
    },
    {
     "word": "Alpha",
-    "start": 21.06,
+    "start": 20.94,
     "end": 22.22,
-    "probability": 0.9123
+    "probability": 0.989
    },
    {
     "word": "Charlie",
     "start": 22.22,
-    "end": 23.46,
-    "probability": 0.8631
+    "end": 23.5,
+    "probability": 0.9975
    },
    {
     "word": "Four",
-    "start": 23.46,
-    "end": 24.72,
-    "probability": 0.0526
+    "start": 23.5,
+    "end": 24.8,
+    "probability": 0.9608
    },
    {
     "word": "Alpha",
-    "start": 24.72,
-    "end": 26.24,
-    "probability": 0.3276
+    "start": 24.8,
+    "end": 26.3,
+    "probability": 0.932
    },
    {
     "word": "Uniform",
-    "start": 26.24,
-    "end": 27.82,
-    "probability": 0.6338
+    "start": 26.3,
+    "end": 27.8,
+    "probability": 0.9772
    },
    {
     "word": "Lima,",
-    "start": 27.82,
-    "end": 28.98,
-    "probability": 0.8355
+    "start": 27.8,
+    "end": 29.0,
+    "probability": 0.9883
    },
    {
     "word": "stand",
-    "start": 29.96,
-    "end": 30.36,
-    "probability": 0.9296
+    "start": 29.54,
+    "end": 30.34,
+    "probability": 0.9876
    },
    {
     "word": "by.",
-    "start": 30.36,
-    "end": 31.3,
-    "probability": 0.9947
-   },
-   {
-    "word": "Message",
-    "start": 32.08,
-    "end": 32.36,
-    "probability": 0.0396
-   },
-   {
-    "word": "follows.",
-    "start": 32.36,
-    "end": 33.34,
-    "probability": 0.0146
+    "start": 30.34,
+    "end": 30.68,
+    "probability": 0.9978
    },
    {
     "word": "Alpha",
-    "start": 35.0,
-    "end": 36.36,
-    "probability": 0.9816
+    "start": 35.7,
+    "end": 36.4,
+    "probability": 0.6748
+   },
+   {
+    "word": "Charlie",
+    "start": 36.4,
+    "end": 37.84,
+    "probability": 0.0127
    },
    {
     "word": "Four",
-    "start": 37.8,
-    "end": 39.12,
-    "probability": 0.0067
+    "start": 37.84,
+    "end": 39.18,
+    "probability": 0.0125
    },
    {
     "word": "Alpha",
-    "start": 39.12,
-    "end": 40.82,
-    "probability": 0.4663
+    "start": 39.18,
+    "end": 40.88,
+    "probability": 0.8281
    },
    {
     "word": "Uniform",
-    "start": 40.82,
-    "end": 42.52,
-    "probability": 0.5158
+    "start": 40.88,
+    "end": 42.46,
+    "probability": 0.6368
    },
    {
     "word": "Lima",
-    "start": 42.52,
-    "end": 43.74,
-    "probability": 0.6131
+    "start": 42.46,
+    "end": 43.7,
+    "probability": 0.8201
    },
    {
     "word": "Uniform",
-    "start": 43.74,
-    "end": 45.36,
-    "probability": 0.8534
+    "start": 43.7,
+    "end": 45.32,
+    "probability": 0.9471
    },
    {
     "word": "Kilo",
-    "start": 45.36,
+    "start": 45.32,
     "end": 46.72,
-    "probability": 0.3915
+    "probability": 0.3345
    },
    {
     "word": "Yankee",
     "start": 46.72,
-    "end": 48.14,
-    "probability": 0.0028
+    "end": 48.22,
+    "probability": 0.0213
    },
    {
     "word": "Sierra",
-    "start": 48.14,
-    "end": 49.7,
-    "probability": 0.9606
+    "start": 48.22,
+    "end": 49.68,
+    "probability": 0.9752
    },
    {
     "word": "Kilo",
-    "start": 49.7,
+    "start": 49.68,
     "end": 51.12,
-    "probability": 0.9096
+    "probability": 0.8916
    },
    {
     "word": "India",
     "start": 51.12,
-    "end": 52.78,
-    "probability": 0.9775
+    "end": 52.58,
+    "probability": 0.9861
    },
    {
-    "word": "Big",
-    "start": 52.78,
-    "end": 53.94,
-    "probability": 0.7224
+    "word": "Victor",
+    "start": 52.58,
+    "end": 54.22,
+    "probability": 0.2457
    },
    {
-    "word": "Door",
-    "start": 53.94,
-    "end": 54.28,
-    "probability": 0.7118
+    "word": "Victor",
+    "start": 54.22,
+    "end": 56.1,
+    "probability": 0.7747
    },
    {
-    "word": "Big",
-    "start": 54.28,
-    "end": 55.54,
-    "probability": 0.8531
+    "word": "Sierra",
+    "start": 56.1,
+    "end": 57.32,
+    "probability": 0.9972
    },
    {
-    "word": "Door",
-    "start": 55.54,
-    "end": 56.34,
-    "probability": 0.989
-   },
-   {
-    "word": "Kilo",
-    "start": 60.4,
-    "end": 61.8,
-    "probability": 0.0018
-   },
-   {
-    "word": "Hotel",
-    "start": 61.8,
-    "end": 63.2,
-    "probability": 0.0124
+    "word": "Four.",
+    "start": 57.32,
+    "end": 58.66,
+    "probability": 0.8509
    },
    {
     "word": "Foxtrot",
-    "start": 63.2,
-    "end": 65.46,
-    "probability": 0.6458
+    "start": 63.7,
+    "end": 65.08,
+    "probability": 0.5772
    },
    {
     "word": "X",
-    "start": 65.46,
-    "end": 66.14,
-    "probability": 0.5406
+    "start": 65.08,
+    "end": 66.12,
+    "probability": 0.1665
    },
    {
     "word": "-ray",
-    "start": 66.14,
+    "start": 66.12,
     "end": 66.52,
-    "probability": 0.649
+    "probability": 0.7817
    },
    {
     "word": "Tree",
     "start": 66.52,
-    "end": 67.94,
-    "probability": 0.5137
+    "end": 67.9,
+    "probability": 0.45
    },
    {
     "word": "Papa",
-    "start": 67.94,
-    "end": 69.54,
-    "probability": 0.6828
+    "start": 67.9,
+    "end": 69.58,
+    "probability": 0.4514
    },
    {
     "word": "Delta",
-    "start": 69.54,
-    "end": 71.3,
-    "probability": 0.6565
+    "start": 69.58,
+    "end": 71.34,
+    "probability": 0.4849
    },
    {
     "word": "Romeo",
-    "start": 71.3,
-    "end": 72.9,
-    "probability": 0.9786
+    "start": 71.34,
+    "end": 72.88,
+    "probability": 0.9516
    },
    {
-    "word": "Team",
-    "start": 72.9,
+    "word": "Keep",
+    "start": 72.88,
     "end": 74.28,
-    "probability": 0.3971
+    "probability": 0.0914
    },
    {
-    "word": "R.",
+    "word": "to",
     "start": 74.28,
-    "end": 74.52,
-    "probability": 0.0001
+    "end": 74.56,
+    "probability": 0.3455
+   },
+   {
+    "word": "it.",
+    "start": 74.56,
+    "end": 75.34,
+    "probability": 0.9551
    },
    {
     "word": "Seven",
-    "start": 74.74,
-    "end": 76.04,
-    "probability": 0.0343
+    "start": 75.52,
+    "end": 76.12,
+    "probability": 0.699
    },
    {
     "word": "Delta",
-    "start": 76.04,
+    "start": 76.12,
     "end": 77.82,
-    "probability": 0.9748
+    "probability": 0.8782
    },
    {
     "word": "Echo",
     "start": 77.82,
     "end": 79.24,
-    "probability": 0.9011
+    "probability": 0.8812
    },
    {
-    "word": "Golf",
+    "word": "Golf.",
     "start": 79.24,
-    "end": 80.9,
-    "probability": 0.4941
+    "end": 80.84,
+    "probability": 0.4024
+   },
+   {
+    "word": "I",
+    "start": 80.84,
+    "end": 83.16,
+    "probability": 0.3737
+   },
+   {
+    "word": "say",
+    "start": 83.16,
+    "end": 83.76,
+    "probability": 0.6833
+   },
+   {
+    "word": "again.",
+    "start": 83.76,
+    "end": 85.82,
+    "probability": 0.7673
    },
    {
     "word": "Alpha",
-    "start": 90.88,
-    "end": 92.28,
-    "probability": 0.5484
+    "start": 86.92,
+    "end": 87.22,
+    "probability": 0.5982
+   },
+   {
+    "word": "Charlie",
+    "start": 87.22,
+    "end": 88.74,
+    "probability": 0.251
+   },
+   {
+    "word": "Four",
+    "start": 88.74,
+    "end": 90.16,
+    "probability": 0.1433
+   },
+   {
+    "word": "Alpha",
+    "start": 90.16,
+    "end": 92.0,
+    "probability": 0.8732
    },
    {
     "word": "Uniform",
-    "start": 92.28,
-    "end": 93.68,
-    "probability": 0.1518
+    "start": 92.0,
+    "end": 93.7,
+    "probability": 0.5676
    },
    {
     "word": "Lima",
-    "start": 93.68,
-    "end": 95.04,
-    "probability": 0.5766
+    "start": 93.7,
+    "end": 95.08,
+    "probability": 0.5653
    },
    {
     "word": "Uniform",
-    "start": 95.04,
-    "end": 96.8,
-    "probability": 0.8127
+    "start": 95.08,
+    "end": 96.78,
+    "probability": 0.8926
    },
    {
     "word": "Kilo",
-    "start": 96.8,
-    "end": 98.3,
-    "probability": 0.19
+    "start": 96.78,
+    "end": 98.28,
+    "probability": 0.3891
    },
    {
     "word": "Yankee",
-    "start": 98.3,
-    "end": 99.8,
-    "probability": 0.5581
+    "start": 98.28,
+    "end": 99.74,
+    "probability": 0.4076
    },
    {
     "word": "Sierra",
-    "start": 99.8,
+    "start": 99.74,
     "end": 101.3,
-    "probability": 0.9892
+    "probability": 0.9207
    },
    {
     "word": "Kilo",
     "start": 101.3,
     "end": 102.94,
-    "probability": 0.9595
+    "probability": 0.9775
    },
    {
     "word": "India",
     "start": 102.94,
-    "end": 104.78,
-    "probability": 0.0304
+    "end": 104.66,
+    "probability": 0.9642
    },
    {
-    "word": "Big",
-    "start": 104.78,
-    "end": 105.98,
-    "probability": 0.0104
-   },
-   {
-    "word": "Door",
-    "start": 105.98,
-    "end": 106.34,
-    "probability": 0.7639
-   },
-   {
-    "word": "Big",
-    "start": 106.34,
-    "end": 107.6,
-    "probability": 0.2236
-   },
-   {
-    "word": "Door",
-    "start": 107.6,
-    "end": 109.5,
-    "probability": 0.9711
+    "word": "Victor",
+    "start": 104.66,
+    "end": 106.1,
+    "probability": 0.0009
    },
    {
     "word": "Sierra",
-    "start": 109.5,
-    "end": 109.5,
-    "probability": 0.4473
+    "start": 106.1,
+    "end": 109.3,
+    "probability": 0.0732
    },
    {
-    "word": "Four",
-    "start": 109.5,
-    "end": 110.98,
-    "probability": 0.031
+    "word": "Four.",
+    "start": 109.3,
+    "end": 110.0,
+    "probability": 0.5122
    },
    {
-    "word": "Big",
-    "start": 111.98,
+    "word": "Victor",
+    "start": 111.64,
     "end": 112.34,
-    "probability": 0.2233
-   },
-   {
-    "word": "Door",
-    "start": 112.34,
-    "end": 112.7,
-    "probability": 0.4195
+    "probability": 0.0028
    },
    {
     "word": "Tango",
-    "start": 112.7,
-    "end": 114.24,
-    "probability": 0.7685
+    "start": 112.34,
+    "end": 114.42,
+    "probability": 0.754
    },
    {
     "word": "Hotel",
-    "start": 114.24,
-    "end": 115.76,
-    "probability": 0.9751
-   },
-   {
-    "word": "Fo",
-    "start": 115.76,
-    "end": 117.12,
-    "probability": 0.0761
+    "start": 114.42,
+    "end": 115.9,
+    "probability": 0.972
    },
    {
     "word": "Foxtrot",
-    "start": 117.12,
-    "end": 117.64,
-    "probability": 0.3327
+    "start": 115.9,
+    "end": 117.7,
+    "probability": 0.6455
    },
    {
     "word": "X",
-    "start": 117.64,
-    "end": 118.66,
-    "probability": 0.2833
+    "start": 117.7,
+    "end": 118.72,
+    "probability": 0.8713
    },
    {
     "word": "-ray",
-    "start": 118.66,
-    "end": 118.98,
-    "probability": 0.2793
+    "start": 118.72,
+    "end": 119.14,
+    "probability": 0.59
    },
    {
     "word": "Tree",
-    "start": 118.98,
-    "end": 120.48,
-    "probability": 0.0622
+    "start": 119.14,
+    "end": 120.76,
+    "probability": 0.7194
    },
    {
     "word": "Papa",
-    "start": 120.48,
+    "start": 120.76,
     "end": 121.82,
-    "probability": 0.0032
+    "probability": 0.0026
    },
    {
     "word": "Delta",
     "start": 121.82,
-    "end": 123.54,
-    "probability": 0.5886
+    "end": 123.56,
+    "probability": 0.688
    },
    {
     "word": "Romeo",
-    "start": 123.54,
-    "end": 124.98,
-    "probability": 0.3821
+    "start": 123.56,
+    "end": 125.02,
+    "probability": 0.6858
    },
    {
-    "word": "Big",
-    "start": 124.98,
-    "end": 126.48,
-    "probability": 0.9635
-   },
-   {
-    "word": "Door",
-    "start": 126.48,
-    "end": 126.88,
-    "probability": 0.9585
+    "word": "Victor",
+    "start": 125.02,
+    "end": 126.78,
+    "probability": 0.9149
    },
    {
     "word": "Seven",
-    "start": 126.88,
-    "end": 128.22,
-    "probability": 0.1518
+    "start": 126.78,
+    "end": 128.28,
+    "probability": 0.2537
    },
    {
     "word": "Delta",
-    "start": 128.22,
-    "end": 130.12,
-    "probability": 0.9861
+    "start": 128.28,
+    "end": 130.14,
+    "probability": 0.9846
    },
    {
     "word": "Echo",
-    "start": 130.12,
+    "start": 130.14,
     "end": 131.68,
-    "probability": 0.9648
+    "probability": 0.9595
    },
    {
-    "word": "Golf",
+    "word": "Golf.",
     "start": 131.68,
-    "end": 133.38,
-    "probability": 0.9347
+    "end": 133.44,
+    "probability": 0.937
    },
    {
     "word": "This",
-    "start": 133.38,
-    "end": 135.94,
-    "probability": 0.4903
+    "start": 133.44,
+    "end": 135.96,
+    "probability": 0.6804
    },
    {
     "word": "is",
-    "start": 135.94,
-    "end": 136.88,
-    "probability": 0.9687
+    "start": 135.96,
+    "end": 136.9,
+    "probability": 0.9805
    },
    {
     "word": "Cupway",
-    "start": 136.88,
+    "start": 136.9,
     "end": 138.0,
-    "probability": 0.1811
+    "probability": 0.2566
    },
    {
     "word": "out.",
     "start": 138.0,
     "end": 138.98,
-    "probability": 0.6768
+    "probability": 0.6015
+   },
+   {
+    "word": "Out.",
+    "start": 163.12,
+    "end": 164.52,
+    "probability": 0.4108
    },
    {
     "word": "All",
-    "start": 204.52,
-    "end": 205.92,
-    "probability": 0.1431
+    "start": 177.58,
+    "end": 178.34,
+    "probability": 0.166
    },
    {
     "word": "stations,",
-    "start": 205.92,
-    "end": 207.32,
-    "probability": 0.399
+    "start": 178.34,
+    "end": 178.68,
+    "probability": 0.3622
    },
    {
-    "word": "Five",
-    "start": 267.32,
-    "end": 268.18,
-    "probability": 0.221
+    "word": "all",
+    "start": 179.18,
+    "end": 179.52,
+    "probability": 0.8259
+   },
+   {
+    "word": "stations.",
+    "start": 179.52,
+    "end": 179.92,
+    "probability": 0.9782
+   },
+   {
+    "word": "This",
+    "start": 179.92,
+    "end": 180.98,
+    "probability": 0.4692
+   },
+   {
+    "word": "is",
+    "start": 180.98,
+    "end": 181.72,
+    "probability": 0.9869
+   },
+   {
+    "word": "Sockhole,",
+    "start": 181.72,
+    "end": 182.82,
+    "probability": 0.439
+   },
+   {
+    "word": "Sockhole",
+    "start": 182.88,
+    "end": 184.68,
+    "probability": 0.9793
+   },
+   {
+    "word": "Freak",
+    "start": 184.68,
+    "end": 185.54,
+    "probability": 0.0535
+   },
+   {
+    "word": "Quebec",
+    "start": 185.54,
+    "end": 188.0,
+    "probability": 0.0767
+   },
+   {
+    "word": "Hotel",
+    "start": 188.0,
+    "end": 190.0,
+    "probability": 0.7099
+   },
+   {
+    "word": "Beautiful",
+    "start": 190.0,
+    "end": 191.82,
+    "probability": 0.3174
    },
    {
     "word": "Delta",
-    "start": 268.18,
-    "end": 270.0,
-    "probability": 0.002
-   },
-   {
-    "word": "Center",
-    "start": 270.0,
-    "end": 270.88,
-    "probability": 0.0751
+    "start": 191.82,
+    "end": 193.8,
+    "probability": 0.9779
    },
    {
     "word": "Sierra",
-    "start": 270.88,
-    "end": 272.5,
-    "probability": 0.9388
+    "start": 193.8,
+    "end": 195.64,
+    "probability": 0.9199
    },
    {
-    "word": "Juliet",
-    "start": 272.5,
-    "end": 274.66,
-    "probability": 0.7152
+    "word": "Two",
+    "start": 195.64,
+    "end": 197.28,
+    "probability": 0.1689
    },
    {
-    "word": "Victor,",
-    "start": 274.66,
-    "end": 277.32,
-    "probability": 0.9317
+    "word": "S",
+    "start": 197.28,
+    "end": 198.44,
+    "probability": 0.0411
    },
    {
-    "word": "Sierra,",
-    "start": 343.66,
-    "end": 344.3,
-    "probability": 0.7182
+    "word": "-ray",
+    "start": 198.44,
+    "end": 198.78,
+    "probability": 0.0301
    },
    {
-    "word": "Juliet,",
-    "start": 345.56,
-    "end": 346.46,
-    "probability": 0.0679
+    "word": "Quebec",
+    "start": 198.78,
+    "end": 201.12,
+    "probability": 0.9774
    },
    {
-    "word": "Victor,",
-    "start": 348.26,
-    "end": 348.84,
-    "probability": 0.5681
+    "word": "Hotel",
+    "start": 201.12,
+    "end": 203.04,
+    "probability": 0.9536
    },
    {
-    "word": "Tesco,",
-    "start": 350.06,
-    "end": 351.24,
-    "probability": 0.3517
+    "word": "Beautiful",
+    "start": 203.04,
+    "end": 205.24,
+    "probability": 0.8627
    },
    {
-    "word": "Nino,",
-    "start": 352.66,
-    "end": 353.24,
-    "probability": 0.0234,
-    "snapped_to": "nine"
+    "word": "Delta",
+    "start": 205.24,
+    "end": 206.98,
+    "probability": 0.9372
    },
    {
-    "word": "Rishi,",
-    "start": 354.52,
-    "end": 355.52,
-    "probability": 0.3388
+    "word": "Sierra",
+    "start": 206.98,
+    "end": 209.18,
+    "probability": 0.9519
    },
    {
-    "word": "Charlie,",
-    "start": 356.84,
-    "end": 357.88,
-    "probability": 0.9214
+    "word": "Two,",
+    "start": 210.18,
+    "end": 210.84,
+    "probability": 0.1377
    },
    {
-    "word": "Lima,",
-    "start": 359.38,
-    "end": 360.1,
-    "probability": 0.4455
+    "word": "Six",
+    "start": 211.62,
+    "end": 212.14,
+    "probability": 0.0393
    },
    {
-    "word": "N",
-    "start": 362.0,
-    "end": 362.0,
-    "probability": 0.09
+    "word": "Five,",
+    "start": 212.14,
+    "end": 212.58,
+    "probability": 0.2874
+   },
+   {
+    "word": "Quebec",
+    "start": 213.42,
+    "end": 214.4,
+    "probability": 0.0035
+   },
+   {
+    "word": "Hotel",
+    "start": 214.4,
+    "end": 216.5,
+    "probability": 0.0766
+   },
+   {
+    "word": "Beautiful",
+    "start": 216.5,
+    "end": 218.42,
+    "probability": 0.0075
+   },
+   {
+    "word": "Delta",
+    "start": 218.42,
+    "end": 220.36,
+    "probability": 0.4232
+   },
+   {
+    "word": "Sierra",
+    "start": 220.36,
+    "end": 222.32,
+    "probability": 0.9457
+   },
+   {
+    "word": "Two,",
+    "start": 222.32,
+    "end": 223.98,
+    "probability": 0.8638
+   },
+   {
+    "word": "Six",
+    "start": 225.04,
+    "end": 225.38,
+    "probability": 0.9545
+   },
+   {
+    "word": "Five,",
+    "start": 225.38,
+    "end": 225.94,
+    "probability": 0.9566
+   },
+   {
+    "word": "and",
+    "start": 226.6,
+    "end": 226.66,
+    "probability": 0.1457
+   },
+   {
+    "word": "the",
+    "start": 226.66,
+    "end": 226.82,
+    "probability": 0.2586
+   },
+   {
+    "word": "Follow",
+    "start": 226.92,
+    "end": 227.18,
+    "probability": 0.0273
+   },
+   {
+    "word": "us.",
+    "start": 227.18,
+    "end": 227.42,
+    "probability": 0.2359
+   },
+   {
+    "word": "Get",
+    "start": 228.4,
+    "end": 228.98,
+    "probability": 0.3041
+   },
+   {
+    "word": "back.",
+    "start": 228.98,
+    "end": 229.24,
+    "probability": 0.9641
+   },
+   {
+    "word": "Hotel.",
+    "start": 230.8,
+    "end": 231.2,
+    "probability": 0.8525
+   },
+   {
+    "word": "Uniform.",
+    "start": 232.74,
+    "end": 233.12,
+    "probability": 0.1139
+   },
+   {
+    "word": "Delta.",
+    "start": 234.72,
+    "end": 235.2,
+    "probability": 0.9882
+   },
+   {
+    "word": "Sierra.",
+    "start": 236.74,
+    "end": 237.1,
+    "probability": 0.91
+   },
+   {
+    "word": "Two.",
+    "start": 238.42,
+    "end": 239.12,
+    "probability": 0.9424
+   },
+   {
+    "word": "Roast.",
+    "start": 240.78,
+    "end": 241.28,
+    "probability": 0.3699
+   },
+   {
+    "word": "Bravo.",
+    "start": 242.82,
+    "end": 243.44,
+    "probability": 0.6864
+   },
+   {
+    "word": "Kilo.",
+    "start": 245.24,
+    "end": 245.68,
+    "probability": 0.6122
+   },
+   {
+    "word": "Alpha.",
+    "start": 247.48,
+    "end": 247.9,
+    "probability": 0.002
+   },
+   {
+    "word": "X",
+    "start": 249.62,
+    "end": 249.98,
+    "probability": 0.8264
+   },
+   {
+    "word": "-ray.",
+    "start": 249.98,
+    "end": 250.24,
+    "probability": 0.8857
+   },
+   {
+    "word": "Three.",
+    "start": 254.24,
+    "end": 254.86,
+    "probability": 0.3027
+   },
+   {
+    "word": "Delta.",
+    "start": 256.88,
+    "end": 257.04,
+    "probability": 0.0636
+   },
+   {
+    "word": "Alpha.",
+    "start": 258.7,
+    "end": 259.14,
+    "probability": 0.0214
+   },
+   {
+    "word": "Victor.",
+    "start": 261.06,
+    "end": 261.58,
+    "probability": 0.2031
+   },
+   {
+    "word": "Alpha.",
+    "start": 263.38,
+    "end": 263.6,
+    "probability": 0.1531
+   },
+   {
+    "word": "Delta.",
+    "start": 264.54,
+    "end": 265.94,
+    "probability": 0.9974
+   },
+   {
+    "word": "Five.",
+    "start": 267.26,
+    "end": 268.14,
+    "probability": 0.9563
+   },
+   {
+    "word": "Delta",
+    "start": 269.62,
+    "end": 270.02,
+    "probability": 0.3434
+   },
+   {
+    "word": "Center.",
+    "start": 270.02,
+    "end": 270.4,
+    "probability": 0.5948
+   },
+   {
+    "word": "Sierra.",
+    "start": 271.9,
+    "end": 272.38,
+    "probability": 0.997
+   },
+   {
+    "word": "Juliet.",
+    "start": 274.1,
+    "end": 274.54,
+    "probability": 0.4226
+   },
+   {
+    "word": "Victor.",
+    "start": 275.8,
+    "end": 277.04,
+    "probability": 0.9959
+   },
+   {
+    "word": "Two.",
+    "start": 278.44,
+    "end": 279.2,
+    "probability": 0.1364
+   },
+   {
+    "word": "X",
+    "start": 280.74,
+    "end": 281.24,
+    "probability": 0.0024
+   },
+   {
+    "word": "-ray.",
+    "start": 281.24,
+    "end": 281.34,
+    "probability": 0.082
+   },
+   {
+    "word": "Charlie.",
+    "start": 286.46,
+    "end": 286.88,
+    "probability": 0.3159
+   },
+   {
+    "word": "Lima.",
+    "start": 288.84,
+    "end": 289.24,
+    "probability": 0.0537
+   },
+   {
+    "word": "Zulu.",
+    "start": 290.96,
+    "end": 291.6,
+    "probability": 0.7629
+   },
+   {
+    "word": "Alpha.",
+    "start": 293.5,
+    "end": 294.1,
+    "probability": 0.5249
+   },
+   {
+    "word": "X",
+    "start": 295.66,
+    "end": 295.74,
+    "probability": 0.0008
+   },
+   {
+    "word": "-ray.",
+    "start": 295.74,
+    "end": 296.02,
+    "probability": 0.5099
+   },
+   {
+    "word": "Get",
+    "start": 297.62,
+    "end": 299.02,
+    "probability": 0.617
+   },
+   {
+    "word": "back.",
+    "start": 299.02,
+    "end": 299.28,
+    "probability": 0.8708
+   },
+   {
+    "word": "Hotel.",
+    "start": 301.12,
+    "end": 301.58,
+    "probability": 0.293
+   },
+   {
+    "word": "Beautiful.",
+    "start": 303.38,
+    "end": 303.92,
+    "probability": 0.7804
+   },
+   {
+    "word": "Delta.",
+    "start": 305.5,
+    "end": 306.2,
+    "probability": 0.0449
+   },
+   {
+    "word": "Sierra.",
+    "start": 308.12,
+    "end": 308.5,
+    "probability": 0.9717
+   },
+   {
+    "word": "Two.",
+    "start": 310.4,
+    "end": 310.82,
+    "probability": 0.1387
+   },
+   {
+    "word": "Bravo.",
+    "start": 313.0,
+    "end": 313.14,
+    "probability": 0.1146
+   },
+   {
+    "word": "Bravo.",
+    "start": 314.14,
+    "end": 315.54,
+    "probability": 0.9817
+   },
+   {
+    "word": "Kilo.",
+    "start": 317.52,
+    "end": 318.06,
+    "probability": 0.0211
+   },
+   {
+    "word": "Oscar.",
+    "start": 319.9,
+    "end": 320.4,
+    "probability": 0.0308
+   },
+   {
+    "word": "X",
+    "start": 322.34,
+    "end": 322.6,
+    "probability": 0.0995
+   },
+   {
+    "word": "-ray.",
+    "start": 322.6,
+    "end": 322.86,
+    "probability": 0.8219
+   },
+   {
+    "word": "Victor",
+    "start": 324.5,
+    "end": 324.78,
+    "probability": 0.0025
+   },
+   {
+    "word": "Three.",
+    "start": 324.78,
+    "end": 327.1,
+    "probability": 0.0102
+   },
+   {
+    "word": "Doll.",
+    "start": 329.02,
+    "end": 329.14,
+    "probability": 0.2728
+   },
+   {
+    "word": "Alpha.",
+    "start": 330.54,
+    "end": 331.42,
+    "probability": 0.0014
+   },
+   {
+    "word": "Victor.",
+    "start": 333.16,
+    "end": 333.42,
+    "probability": 0.0
+   },
+   {
+    "word": "Alpha.",
+    "start": 334.64,
+    "end": 335.84,
+    "probability": 0.2115
+   },
+   {
+    "word": "Delta.",
+    "start": 337.42,
+    "end": 337.78,
+    "probability": 0.7115
+   },
+   {
+    "word": "Five.",
+    "start": 339.2,
+    "end": 339.9,
+    "probability": 0.6556
+   },
+   {
+    "word": "November.",
+    "start": 341.26,
+    "end": 342.08,
+    "probability": 0.834
+   },
+   {
+    "word": "Sierra.",
+    "start": 343.86,
+    "end": 344.28,
+    "probability": 0.9795
+   },
+   {
+    "word": "Juliet.",
+    "start": 345.54,
+    "end": 346.34,
+    "probability": 0.1981
+   },
+   {
+    "word": "Victor.",
+    "start": 348.12,
+    "end": 348.86,
+    "probability": 0.9664
+   },
+   {
+    "word": "X",
+    "start": 350.74,
+    "end": 350.92,
+    "probability": 0.0131
+   },
+   {
+    "word": "-ray.",
+    "start": 350.92,
+    "end": 351.16,
+    "probability": 0.1936
+   },
+   {
+    "word": "X",
+    "start": 351.8,
+    "end": 353.06,
+    "probability": 0.0204
+   },
+   {
+    "word": "-ray.",
+    "start": 353.06,
+    "end": 353.28,
+    "probability": 0.4249
+   },
+   {
+    "word": "X",
+    "start": 353.44,
+    "end": 353.44,
+    "probability": 0.0659
+   },
+   {
+    "word": "-ray.",
+    "start": 353.44,
+    "end": 353.44,
+    "probability": 0.7635
+   },
+   {
+    "word": "I",
+    "start": 365.33,
+    "end": 365.35,
+    "probability": 0.0236
+   },
+   {
+    "word": "say,",
+    "start": 365.35,
+    "end": 365.89,
+    "probability": 0.0141
+   },
+   {
+    "word": "circle",
+    "start": 366.35,
+    "end": 366.99,
+    "probability": 0.4559
+   },
+   {
+    "word": "up.",
+    "start": 366.99,
+    "end": 367.69,
+    "probability": 0.9077
    }
   ],
   "first_pass": {
-   "config_key": "5bfe156c6443",
+   "config_key": "437b8c03f291",
    "model": "small.en",
-   "compute_type": "int8",
-   "asr_seconds": 173.4
+   "compute_type": "float32",
+   "asr_seconds": 496.2
   },
   "second_pass": {
    "mode": "vote3@0.3",
@@ -826,7 +1394,7 @@
    "threshold": 0.3,
    "configs": [
     {
-     "config_key": "f859126967e2",
+     "config_key": "3c2d4bc96300",
      "overrides": {
       "vad_filter": false,
       "condition_on_previous_text": false
@@ -834,7 +1402,7 @@
      "snap": true
     },
     {
-     "config_key": "cd9520516476",
+     "config_key": "84403ae3ba83",
      "overrides": {
       "vad_filter": true,
       "condition_on_previous_text": false
@@ -844,24 +1412,70 @@
    ],
    "fired": true,
    "passes": 3,
-   "asr_seconds": 173.4,
+   "asr_seconds": 496.2,
    "second_pass_asr_seconds": [
-    155.0,
-    16.1
+    264.1,
+    23.7
    ]
+  },
+  "guard": {
+   "windows": [
+    [
+     0.0,
+     180.3
+    ],
+    [
+     180.3,
+     374.297
+    ]
+   ],
+   "fallbacks": [
+    {
+     "start": 180.3,
+     "end": 374.3,
+     "reason": "timeout",
+     "resume_at": 353.44,
+     "fallback_status": "ok"
+    },
+    {
+     "start": 137.98,
+     "end": 178.58,
+     "reason": "loop",
+     "resume_at": 167.98,
+     "fallback_status": "ok"
+    }
+   ],
+   "repairs": [
+    {
+     "start": 138.98,
+     "end": 177.58,
+     "words": 1
+    },
+    {
+     "start": 179.92,
+     "end": 226.92,
+     "words": 31
+    },
+    {
+     "start": 315.54,
+     "end": 330.54,
+     "words": 7
+    }
+   ],
+   "coverage": 0.543
   }
  },
  "broadcasts": [
   {
-   "broadcast_id": "113a77c6bb38@0.0",
+   "broadcast_id": "113a77c6bb38@1.0",
    "type": "eam",
-   "start_s": 0.0,
-   "end_s": 138.98,
+   "start_s": 1.0,
+   "end_s": 164.52,
    "asr_word_span": [
     0,
-    90
+    88
    ],
-   "transcript": "Four Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform Lima, stand by. Message follows. Alpha Four Alpha Uniform Lima Uniform Kilo Yankee Sierra Kilo India Big Door Big Door Kilo Hotel Foxtrot X -ray Tree Papa Delta Romeo Team R. Seven Delta Echo Golf Alpha Uniform Lima Uniform Kilo Yankee Sierra Kilo India Big Door Big Door Sierra Four Big Door Tango Hotel Fo Foxtrot X -ray Tree Papa Delta Romeo Big Door Seven Delta Echo Golf This is Cupway out.",
+   "transcript": "Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform Lima, stand by. Alpha Charlie Four Alpha Uniform Lima Uniform Kilo Yankee Sierra Kilo India Victor Victor Sierra Four. Foxtrot X -ray Tree Papa Delta Romeo Keep to it. Seven Delta Echo Golf. I say again. Alpha Charlie Four Alpha Uniform Lima Uniform Kilo Yankee Sierra Kilo India Victor Sierra Four. Victor Tango Hotel Foxtrot X -ray Tree Papa Delta Romeo Victor Seven Delta Echo Golf. This is Cupway out. Out.",
    "callsign": "CUPWAY",
    "callsigns_all": [
     {
@@ -869,12 +1483,12 @@
      "role": "closing"
     }
    ],
-   "confidence": 0.321,
+   "confidence": 0.724,
    "confidence_detail": {
-    "mean": 0.321,
-    "min": 0.0,
-    "low_count": 33,
-    "reads_agree_ratio": 0.0
+    "mean": 0.724,
+    "min": 0.029,
+    "low_count": 8,
+    "reads_agree_ratio": 0.828
    },
    "schema_version": "0.2",
    "opening_callsign": null,
@@ -882,404 +1496,260 @@
    "addressee": null,
    "preamble": "AC4AUL",
    "preamble_reads": [
-    "4AUL",
+    "AUL",
     "AC4AUL",
     "AC4AUL"
    ],
    "declared_length": null,
    "length_source": "default",
    "expected_length": 30,
-   "read1": "A4AULUKYSKIKHFX3PDRR7DEGAULUKYSKIS4THFX3PDR7DEG",
-   "read2": "",
-   "body": "A4AULUKYSKIKHFX3PDRR7DEGAULUKYSKIS4THFX3PDR7DEG",
-   "body_masked": "A....U..SKI.......R..DE.......SK....H.......DEG",
-   "body_length": 47,
+   "read1": "AC4AULUKYSKIVVS4FX3PDR7DEG",
+   "read2": "AC4AULUKYSKIVS4VTHFX3PDRV7DEG",
+   "body": "AC4AULUKYSKIVS4VSHFX3PDRV7DEG",
+   "body_masked": "AC4AULUK.SKI...V..FX3.DR.7DEG",
+   "body_length": 29,
    "chars": [
     {
      "char": "A",
-     "confidence": 0.794,
+     "confidence": 0.935,
      "read1": "A",
-     "read2": null,
-     "agree": false,
+     "read2": "A",
+     "agree": true,
      "preamble": "A"
     },
     {
-     "char": "4",
-     "confidence": 0.004,
-     "read1": "4",
-     "read2": null,
-     "agree": false,
+     "char": "C",
+     "confidence": 0.63,
+     "read1": "C",
+     "read2": "C",
+     "agree": true,
      "preamble": "C"
     },
     {
-     "char": "A",
-     "confidence": 0.28,
-     "read1": "A",
-     "read2": null,
-     "agree": false,
+     "char": "4",
+     "confidence": 0.577,
+     "read1": "4",
+     "read2": "4",
+     "agree": true,
      "preamble": "4"
     },
     {
-     "char": "U",
-     "confidence": 0.309,
-     "read1": "U",
-     "read2": null,
-     "agree": false,
+     "char": "A",
+     "confidence": 0.989,
+     "read1": "A",
+     "read2": "A",
+     "agree": true,
      "preamble": "A"
     },
     {
-     "char": "L",
-     "confidence": 0.368,
-     "read1": "L",
-     "read2": null,
-     "agree": false,
+     "char": "U",
+     "confidence": 0.921,
+     "read1": "U",
+     "read2": "U",
+     "agree": true,
      "preamble": "U"
     },
     {
-     "char": "U",
-     "confidence": 0.512,
-     "read1": "U",
-     "read2": null,
-     "agree": false,
+     "char": "L",
+     "confidence": 0.961,
+     "read1": "L",
+     "read2": "L",
+     "agree": true,
      "preamble": "L"
     },
     {
+     "char": "U",
+     "confidence": 0.994,
+     "read1": "U",
+     "read2": "U",
+     "agree": true,
+     "preamble": null
+    },
+    {
      "char": "K",
-     "confidence": 0.235,
+     "confidence": 0.593,
      "read1": "K",
-     "read2": null,
-     "agree": false,
+     "read2": "K",
+     "agree": true,
      "preamble": null
     },
     {
      "char": "Y",
-     "confidence": 0.002,
+     "confidence": 0.42,
      "read1": "Y",
-     "read2": null,
-     "agree": false,
+     "read2": "Y",
+     "agree": true,
      "preamble": null
     },
     {
      "char": "S",
-     "confidence": 0.576,
+     "confidence": 0.998,
      "read1": "S",
-     "read2": null,
-     "agree": false,
+     "read2": "S",
+     "agree": true,
      "preamble": null
     },
     {
      "char": "K",
-     "confidence": 0.546,
+     "confidence": 0.998,
      "read1": "K",
-     "read2": null,
-     "agree": false,
+     "read2": "K",
+     "agree": true,
      "preamble": null
     },
     {
      "char": "I",
-     "confidence": 0.587,
+     "confidence": 1.0,
      "read1": "I",
-     "read2": null,
-     "agree": false,
+     "read2": "I",
+     "agree": true,
      "preamble": null
     },
     {
-     "char": "K",
-     "confidence": 0.001,
-     "read1": "K",
-     "read2": null,
-     "agree": false,
-     "preamble": null
-    },
-    {
-     "char": "H",
-     "confidence": 0.007,
-     "read1": "H",
-     "read2": null,
-     "agree": false,
-     "preamble": null
-    },
-    {
-     "char": "F",
-     "confidence": 0.387,
-     "read1": "F",
-     "read2": null,
-     "agree": false,
-     "preamble": null
-    },
-    {
-     "char": "X",
-     "confidence": 0.324,
-     "read1": "X",
-     "read2": null,
-     "agree": false,
-     "preamble": null
-    },
-    {
-     "char": "3",
-     "confidence": 0.308,
-     "read1": "3",
-     "read2": null,
-     "agree": false,
-     "preamble": null
-    },
-    {
-     "char": "P",
-     "confidence": 0.41,
-     "read1": "P",
-     "read2": null,
-     "agree": false,
-     "preamble": null
-    },
-    {
-     "char": "D",
-     "confidence": 0.394,
-     "read1": "D",
-     "read2": null,
-     "agree": false,
-     "preamble": null
-    },
-    {
-     "char": "R",
-     "confidence": 0.587,
-     "read1": "R",
-     "read2": null,
-     "agree": false,
-     "preamble": null
-    },
-    {
-     "char": "R",
-     "confidence": 0.0,
-     "read1": "R",
-     "read2": null,
-     "agree": false,
-     "preamble": null
-    },
-    {
-     "char": "7",
-     "confidence": 0.021,
-     "read1": "7",
-     "read2": null,
-     "agree": false,
-     "preamble": null
-    },
-    {
-     "char": "D",
-     "confidence": 0.585,
-     "read1": "D",
-     "read2": null,
-     "agree": false,
-     "preamble": null
-    },
-    {
-     "char": "E",
-     "confidence": 0.541,
-     "read1": "E",
-     "read2": null,
-     "agree": false,
-     "preamble": null
-    },
-    {
-     "char": "G",
-     "confidence": 0.296,
-     "read1": "G",
-     "read2": null,
-     "agree": false,
-     "preamble": null
-    },
-    {
-     "char": "A",
-     "confidence": 0.329,
-     "read1": "A",
-     "read2": null,
-     "agree": false,
-     "preamble": null
-    },
-    {
-     "char": "U",
-     "confidence": 0.091,
-     "read1": "U",
-     "read2": null,
-     "agree": false,
-     "preamble": null
-    },
-    {
-     "char": "L",
-     "confidence": 0.346,
-     "read1": "L",
-     "read2": null,
-     "agree": false,
-     "preamble": null
-    },
-    {
-     "char": "U",
-     "confidence": 0.488,
-     "read1": "U",
-     "read2": null,
-     "agree": false,
-     "preamble": null
-    },
-    {
-     "char": "K",
-     "confidence": 0.114,
-     "read1": "K",
-     "read2": null,
-     "agree": false,
-     "preamble": null
-    },
-    {
-     "char": "Y",
-     "confidence": 0.335,
-     "read1": "Y",
-     "read2": null,
-     "agree": false,
+     "char": "V",
+     "confidence": 0.246,
+     "read1": "V",
+     "read2": "V",
+     "agree": true,
      "preamble": null
     },
     {
      "char": "S",
-     "confidence": 0.594,
-     "read1": "S",
-     "read2": null,
-     "agree": false,
-     "preamble": null
-    },
-    {
-     "char": "K",
-     "confidence": 0.576,
-     "read1": "K",
-     "read2": null,
-     "agree": false,
-     "preamble": null
-    },
-    {
-     "char": "I",
-     "confidence": 0.018,
-     "read1": "I",
-     "read2": null,
-     "agree": false,
-     "preamble": null
-    },
-    {
-     "char": "S",
-     "confidence": 0.268,
-     "read1": "S",
-     "read2": null,
+     "confidence": 0.029,
+     "read1": null,
+     "read2": "S",
      "agree": false,
      "preamble": null
     },
     {
      "char": "4",
-     "confidence": 0.019,
-     "read1": "4",
-     "read2": null,
+     "confidence": 0.205,
+     "read1": null,
+     "read2": "4",
      "agree": false,
      "preamble": null
     },
     {
-     "char": "T",
-     "confidence": 0.461,
-     "read1": "T",
-     "read2": null,
+     "char": "V",
+     "confidence": 0.775,
+     "read1": "V",
+     "read2": "V",
+     "agree": true,
+     "preamble": null
+    },
+    {
+     "char": "S",
+     "confidence": 0.499,
+     "read1": "S",
+     "read2": "T",
      "agree": false,
      "preamble": null
     },
     {
      "char": "H",
-     "confidence": 0.585,
-     "read1": "H",
-     "read2": null,
+     "confidence": 0.486,
+     "read1": "4",
+     "read2": "H",
      "agree": false,
      "preamble": null
     },
     {
      "char": "F",
-     "confidence": 0.2,
+     "confidence": 0.85,
      "read1": "F",
-     "read2": null,
-     "agree": false,
+     "read2": "F",
+     "agree": true,
      "preamble": null
     },
     {
      "char": "X",
-     "confidence": 0.168,
+     "confidence": 0.658,
      "read1": "X",
-     "read2": null,
-     "agree": false,
+     "read2": "X",
+     "agree": true,
      "preamble": null
     },
     {
      "char": "3",
-     "confidence": 0.037,
+     "confidence": 0.846,
      "read1": "3",
-     "read2": null,
-     "agree": false,
+     "read2": "3",
+     "agree": true,
      "preamble": null
     },
     {
      "char": "P",
-     "confidence": 0.002,
+     "confidence": 0.453,
      "read1": "P",
-     "read2": null,
-     "agree": false,
+     "read2": "P",
+     "agree": true,
      "preamble": null
     },
     {
      "char": "D",
-     "confidence": 0.353,
+     "confidence": 0.839,
      "read1": "D",
-     "read2": null,
-     "agree": false,
+     "read2": "D",
+     "agree": true,
      "preamble": null
     },
     {
      "char": "R",
-     "confidence": 0.229,
+     "confidence": 0.985,
      "read1": "R",
-     "read2": null,
+     "read2": "R",
+     "agree": true,
+     "preamble": null
+    },
+    {
+     "char": "V",
+     "confidence": 0.366,
+     "read1": null,
+     "read2": "V",
      "agree": false,
      "preamble": null
     },
     {
      "char": "7",
-     "confidence": 0.091,
+     "confidence": 0.775,
      "read1": "7",
-     "read2": null,
-     "agree": false,
+     "read2": "7",
+     "agree": true,
      "preamble": null
     },
     {
      "char": "D",
-     "confidence": 0.592,
+     "confidence": 0.998,
      "read1": "D",
-     "read2": null,
-     "agree": false,
+     "read2": "D",
+     "agree": true,
      "preamble": null
     },
     {
      "char": "E",
-     "confidence": 0.579,
+     "confidence": 0.995,
      "read1": "E",
-     "read2": null,
-     "agree": false,
+     "read2": "E",
+     "agree": true,
      "preamble": null
     },
     {
      "char": "G",
-     "confidence": 0.561,
+     "confidence": 0.962,
      "read1": "G",
-     "read2": null,
-     "agree": false,
+     "read2": "G",
+     "agree": true,
      "preamble": null
     }
    ],
    "timing": {
     "read1": {
-     "start_sec": 35.0,
-     "end_sec": 133.38
+     "start_sec": 35.7,
+     "end_sec": 80.84
     },
     "read2": {
-     "start_sec": null,
-     "end_sec": null
+     "start_sec": 86.92,
+     "end_sec": 133.44
     }
    },
    "closing_callsign": "CUPWAY",
@@ -1289,61 +1759,314 @@
    "flags": [
     "missing_all_stations",
     "missing_callsign",
+    "missing_message_follows",
     "preamble_reads_disagree",
-    "single_read",
     "non_character_words_in_body",
+    "reads_disagree",
     "length_mismatch",
-    "preamble_body_mismatch",
-    "partial_start",
-    "second_pass_vote"
+    "partial_start"
    ],
    "segment": {
     "token_start": 0,
-    "token_end": 86,
-    "start_sec": 0.0,
-    "end_sec": 138.98,
+    "token_end": 82,
+    "start_sec": 1.0,
+    "end_sec": 164.52,
     "word_start": 0,
-    "word_end": 90
-   },
-   "body_first_pass": "A4AULUKYSKIKHFX3PDRR7DEGAULUKYSKIS4THFX3PDR7DEG"
+    "word_end": 88
+   }
   },
   {
-   "broadcast_id": "113a77c6bb38@204.5",
+   "broadcast_id": "113a77c6bb38@177.6",
    "type": "eam",
-   "start_s": 204.52,
-   "end_s": 362.0,
+   "start_s": 177.58,
+   "end_s": 367.69,
    "asr_word_span": [
-    91,
-    107
+    89,
+    194
    ],
-   "transcript": "All stations, Five Delta Center Sierra Juliet Victor, Sierra, Juliet, Victor, Tesco, Nino, Rishi, Charlie, Lima, N",
-   "callsign": null,
-   "callsigns_all": [],
-   "confidence": 0.325,
+   "transcript": "All stations, all stations. This is Sockhole, Sockhole Freak Quebec Hotel Beautiful Delta Sierra Two S -ray Quebec Hotel Beautiful Delta Sierra Two, Six Five, Quebec Hotel Beautiful Delta Sierra Two, Six Five, and the Follow us. Get back. Hotel. Uniform. Delta. Sierra. Two. Roast. Bravo. Kilo. Alpha. X -ray. Three. Delta. Alpha. Victor. Alpha. Delta. Five. Delta Center. Sierra. Juliet. Victor. Two. X -ray. Charlie. Lima. Zulu. Alpha. X -ray. Get back. Hotel. Beautiful. Delta. Sierra. Two. Bravo. Bravo. Kilo. Oscar. X -ray. Victor Three. Doll. Alpha. Victor. Alpha. Delta. Five. November. Sierra. Juliet. Victor. X -ray. X -ray. X -ray. I say, circle up.",
+   "callsign": "SOCKHOLE SOCKHOLE FREAK",
+   "callsigns_all": [
+    {
+     "callsign": "SOCKHOLE SOCKHOLE FREAK",
+     "role": "opening"
+    }
+   ],
+   "confidence": 0.289,
    "confidence_detail": {
-    "mean": 0.325,
-    "min": 0.007,
-    "low_count": 7,
+    "mean": 0.289,
+    "min": 0.0,
+    "low_count": 43,
     "reads_agree_ratio": 0.0
    },
    "schema_version": "0.2",
-   "opening_callsign": null,
-   "opening_callsign_confidence": 0.0,
+   "opening_callsign": "SOCKHOLE SOCKHOLE FREAK",
+   "opening_callsign_confidence": 0.491,
    "addressee": null,
-   "preamble": null,
-   "preamble_reads": [],
+   "preamble": "QHDS2S",
+   "preamble_reads": [
+    "QHDS2S"
+   ],
    "declared_length": null,
    "length_source": "default",
    "expected_length": 30,
-   "read1": "SJVSJV9CLN",
+   "read1": "QHDS265QHDS265HUDS2BKAX3DAVAD5DSJV2XCLZAXHDS2BBKOXV3AVAD5NSJVXXXI",
    "read2": "",
-   "body": "SJVSJV9CLN",
-   "body_masked": "S.V....C..",
-   "body_length": 10,
+   "body": "AC4AULUKYSKAVVS4VTHFX3PDRV7DEG",
+   "body_masked": "QHDS2.....S265H.DS2.........D5.S.V.........S..B..........NS.V....",
+   "body_length": 30,
    "chars": [
     {
+     "char": "Q",
+     "confidence": 0.793,
+     "read1": "Q",
+     "read2": null,
+     "agree": false,
+     "preamble": "Q"
+    },
+    {
+     "char": "H",
+     "confidence": 0.786,
+     "read1": "H",
+     "read2": null,
+     "agree": false,
+     "preamble": "H"
+    },
+    {
+     "char": "D",
+     "confidence": 0.781,
+     "read1": "D",
+     "read2": null,
+     "agree": false,
+     "preamble": "D"
+    },
+    {
      "char": "S",
-     "confidence": 0.563,
+     "confidence": 0.786,
+     "read1": "S",
+     "read2": null,
+     "agree": false,
+     "preamble": "S"
+    },
+    {
+     "char": "2",
+     "confidence": 0.541,
+     "read1": "2",
+     "read2": null,
+     "agree": false,
+     "preamble": "2"
+    },
+    {
+     "char": "6",
+     "confidence": 0.024,
+     "read1": "6",
+     "read2": null,
+     "agree": false,
+     "preamble": "S"
+    },
+    {
+     "char": "5",
+     "confidence": 0.172,
+     "read1": "5",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "Q",
+     "confidence": 0.002,
+     "read1": "Q",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "H",
+     "confidence": 0.046,
+     "read1": "H",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "D",
+     "confidence": 0.254,
+     "read1": "D",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "S",
+     "confidence": 0.567,
+     "read1": "S",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "2",
+     "confidence": 0.518,
+     "read1": "2",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "6",
+     "confidence": 0.573,
+     "read1": "6",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "5",
+     "confidence": 0.574,
+     "read1": "5",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "H",
+     "confidence": 0.511,
+     "read1": "H",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "U",
+     "confidence": 0.068,
+     "read1": "U",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "D",
+     "confidence": 0.593,
+     "read1": "D",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "S",
+     "confidence": 0.546,
+     "read1": "S",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "2",
+     "confidence": 0.565,
+     "read1": "2",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "B",
+     "confidence": 0.412,
+     "read1": "B",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "K",
+     "confidence": 0.367,
+     "read1": "K",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "A",
+     "confidence": 0.001,
+     "read1": "A",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "X",
+     "confidence": 0.496,
+     "read1": "X",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "3",
+     "confidence": 0.182,
+     "read1": "3",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "D",
+     "confidence": 0.038,
+     "read1": "D",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "A",
+     "confidence": 0.013,
+     "read1": "A",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "V",
+     "confidence": 0.122,
+     "read1": "V",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "A",
+     "confidence": 0.092,
+     "read1": "A",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "D",
+     "confidence": 0.598,
+     "read1": "D",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "5",
+     "confidence": 0.574,
+     "read1": "5",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "D",
+     "confidence": 0.206,
+     "read1": "D",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "S",
+     "confidence": 0.598,
      "read1": "S",
      "read2": null,
      "agree": false,
@@ -1351,7 +2074,7 @@
     },
     {
      "char": "J",
-     "confidence": 0.429,
+     "confidence": 0.254,
      "read1": "J",
      "read2": null,
      "agree": false,
@@ -1359,47 +2082,31 @@
     },
     {
      "char": "V",
-     "confidence": 0.559,
+     "confidence": 0.598,
      "read1": "V",
      "read2": null,
      "agree": false,
      "preamble": null
     },
     {
-     "char": "S",
-     "confidence": 0.431,
-     "read1": "S",
+     "char": "2",
+     "confidence": 0.082,
+     "read1": "2",
      "read2": null,
      "agree": false,
      "preamble": null
     },
     {
-     "char": "J",
-     "confidence": 0.041,
-     "read1": "J",
-     "read2": null,
-     "agree": false,
-     "preamble": null
-    },
-    {
-     "char": "V",
-     "confidence": 0.341,
-     "read1": "V",
-     "read2": null,
-     "agree": false,
-     "preamble": null
-    },
-    {
-     "char": "9",
-     "confidence": 0.007,
-     "read1": "9",
+     "char": "X",
+     "confidence": 0.001,
+     "read1": "X",
      "read2": null,
      "agree": false,
      "preamble": null
     },
     {
      "char": "C",
-     "confidence": 0.553,
+     "confidence": 0.19,
      "read1": "C",
      "read2": null,
      "agree": false,
@@ -1407,16 +2114,224 @@
     },
     {
      "char": "L",
-     "confidence": 0.267,
+     "confidence": 0.032,
      "read1": "L",
      "read2": null,
      "agree": false,
      "preamble": null
     },
     {
+     "char": "Z",
+     "confidence": 0.458,
+     "read1": "Z",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "A",
+     "confidence": 0.315,
+     "read1": "A",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "X",
+     "confidence": 0.0,
+     "read1": "X",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "H",
+     "confidence": 0.176,
+     "read1": "H",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "D",
+     "confidence": 0.027,
+     "read1": "D",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "S",
+     "confidence": 0.583,
+     "read1": "S",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "2",
+     "confidence": 0.083,
+     "read1": "2",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "B",
+     "confidence": 0.069,
+     "read1": "B",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "B",
+     "confidence": 0.589,
+     "read1": "B",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "K",
+     "confidence": 0.013,
+     "read1": "K",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "O",
+     "confidence": 0.018,
+     "read1": "O",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "X",
+     "confidence": 0.06,
+     "read1": "X",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "V",
+     "confidence": 0.002,
+     "read1": "V",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "3",
+     "confidence": 0.006,
+     "read1": "3",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "A",
+     "confidence": 0.001,
+     "read1": "A",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "V",
+     "confidence": 0.0,
+     "read1": "V",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "A",
+     "confidence": 0.127,
+     "read1": "A",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "D",
+     "confidence": 0.427,
+     "read1": "D",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "5",
+     "confidence": 0.393,
+     "read1": "5",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
      "char": "N",
-     "confidence": 0.054,
+     "confidence": 0.5,
      "read1": "N",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "S",
+     "confidence": 0.588,
+     "read1": "S",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "J",
+     "confidence": 0.119,
+     "read1": "J",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "V",
+     "confidence": 0.58,
+     "read1": "V",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "X",
+     "confidence": 0.008,
+     "read1": "X",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "X",
+     "confidence": 0.012,
+     "read1": "X",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "X",
+     "confidence": 0.04,
+     "read1": "X",
+     "read2": null,
+     "agree": false,
+     "preamble": null
+    },
+    {
+     "char": "I",
+     "confidence": 0.014,
+     "read1": "I",
      "read2": null,
      "agree": false,
      "preamble": null
@@ -1424,8 +2339,8 @@
    ],
    "timing": {
     "read1": {
-     "start_sec": 270.0,
-     "end_sec": 362.0
+     "start_sec": 185.54,
+     "end_sec": 367.69
     },
     "read2": {
      "start_sec": null,
@@ -1437,21 +2352,24 @@
    "out": false,
    "disregard": false,
    "flags": [
-    "missing_callsign",
     "missing_message_follows",
     "missing_preamble",
     "single_read",
+    "preamble_inferred",
     "non_character_words_in_body",
-    "length_mismatch"
+    "length_mismatch",
+    "preamble_body_mismatch",
+    "second_pass_vote"
    ],
    "segment": {
-    "token_start": 86,
-    "token_end": 103,
-    "start_sec": 204.52,
-    "end_sec": 362.0,
-    "word_start": 91,
-    "word_end": 107
-   }
+    "token_start": 82,
+    "token_end": 181,
+    "start_sec": 177.58,
+    "end_sec": 367.69,
+    "word_start": 89,
+    "word_end": 194
+   },
+   "body_first_pass": "QHDS265QHDS265HUDS2BKAX3DAVAD5DSJV2XCLZAXHDS2BBKOXV3AVAD5NSJVXXXI"
   }
  ]
 }

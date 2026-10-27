@@ -119,6 +119,9 @@ def build_asr(result: dict, snap: bool = True) -> dict:
             "asr_seconds": first.get("asr_seconds"),
         },
         "second_pass": sp,
+        # Long-recording guards (windows, loop/timeout fallbacks, coverage repairs);
+        # None for ASR output cached before decoding 0.3.
+        "guard": first.get("guard"),
     }
 
 

@@ -60,7 +60,7 @@ faster-whisper's `VadOptions` defaults (v1.2.1) are tuned for clean speech. HF v
 ### Model and compute
 | Setting | CPU box (no GPU, 8 cores here) | GPU |
 |---|---|---|
-| Model | `small.en`, int8 (default); `medium.en`, int8 for second-pass review | `large-v3` or `distil-large-v3`, float16 |
+| Model | `small.en`, **float32** (default since decoding 0.3; int8 is not deterministic, see below) | `large-v3` or `distil-large-v3`, float16 |
 | Approx. speed | small.en int8 runs near real time on 8 cores (to be measured on our clips) | far faster than real time |
 
 Route low-confidence messages to a second pass with a larger model (two-pass escalation; the idea comes from shnikees/netcontroller, which is GPL, so we take the idea only). English-only `.en` models avoid language-detection errors on noise.
@@ -85,6 +85,37 @@ Measure each layer's effect on the eval set before adopting it.
 - `word.probability` from faster-whisper is the per-character ASR probability. It is passed through to `chars[].read1/read2` observations.
 - **Read agreement** is the stronger signal (see §2): two independent readings plus the preamble (heard three times) give up to five observations of the first six characters.
 - Segment `avg_logprob` and `no_speech_prob` are kept for gating.
+
+### Reproducibility and long recordings (decoding 0.3, 2026-10-26)
+**Root cause of the dropout.** CTranslate2's int8 CPU path is not deterministic on our CPUs. The encoder output for
+the same 30 s of audio changed from call to call, with a max abs diff of about 34. That held with 1 thread, a fixed
+seed, temperature 0, `MKL_CBWR=AUTO,STRICT` and `CT2_FORCE_CPU_ISA`. Whisper's no-speech and hallucination-silence
+skips then fired on different windows each run. On weak HF speech a skip can jump over a whole read, or the rest of
+the file. That is why the same clip gave 4 words on one run and 86 on another, why the 374 s two-EAM sample once gave
+31 words and one EAM, and why the 0.542/0.486 gold CER from the int8 cache was not reproducible. A fresh int8 run on the
+box scored 0.803 gold first-pass, 0.855 with vote3, and 0.568 silver first-pass. int16 and float32 are bit-identical
+from run to run, and float32 is also identical at 1, 2, 4 and 8 threads, so `cpu_threads` stays out of the cache key.
+float32 costs some speed: 120 s of audio at 4 threads took 19.6–20.0 s, against 9.5–18.2 s for int8.
+
+**Defaults now (`AsrConfig`):**
+- `compute_type="float32"`.
+- `seed=0`: `ctranslate2.set_random_seed` runs before every decode, so the 0.2/0.4 temperature fallback is
+  repeatable.
+- **Windowing.** Audio longer than 1.33 × `window_s` (240 s) is decoded as independent windows of about 240 s. Each
+  cut goes at the quietest 0.5 s within ±20 s of its nominal point.
+- **Loop guard.** A segment is a loop when it has more than 3 words/s, or when one 1–3-word unit makes up 60 % of its
+  12 or more words. The same applies when a window goes over 3 words/s overall.
+- **Wall-time cap.** A window stops after `max_rtf` (2) × its duration of wall time.
+- **Fallback.** After a loop or a timeout, the segments before the problem are kept. The rest of the window is
+  decoded once more with `fallback` (VAD on, no conditioning, temperature 0).
+- **Coverage guard.** A word-free stretch over 12 s that is not digital silence is decoded again on its own (fresh
+  context), and only the words inside the gap are merged in.
+- **Reporting.** Each decode reports `asr.guard`, which holds the windows, fallbacks, repairs and coverage.
+- **Cache key.** `AsrConfig.key()` hashes every field except `cpu_threads`.
+
+The wall-time cap is the one guard that depends on the machine. Under heavy CPU contention it can fire where a loop
+check would have, so a decode that hits it may differ between machines. Its `guard.fallbacks[].reason` is "timeout".
+Healthy EAM coverage (word-span seconds / duration) is about 0.2–0.5.
 
 ### Chunking long recordings
 Recordings are often 2–4 minutes (missileer clips run 79–117 s plus pre-roll). faster-whisper already windows audio in 30 s chunks after VAD. We keep the word timestamps absolute, and we keep `chunk_length` at the default of 30. For multi-hour streams (YouTube or a NEET INTEL archive), split on VAD silences of 3 s or more into pieces of at most 10 minutes, with 5 s of overlap. Deduplicate words in the overlap by timestamp. whisperX's batched VAD-cut pipeline (wav2vec2 alignment) is an option once we have a GPU, to get tighter word times.
