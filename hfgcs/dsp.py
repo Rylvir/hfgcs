@@ -8,6 +8,7 @@ the same output as one long call. Nothing here touches hardware.
 from __future__ import annotations
 
 import math
+from collections import deque
 
 import numpy as np
 from scipy import signal
@@ -127,13 +128,23 @@ class Agc:
 
 
 class Squelch:
-    """Voice-slot squelch with hysteresis, hang time and a frozen noise floor.
+    """Voice-slot squelch with hysteresis, hang time and a mostly frozen noise floor.
 
     Time is counted from the length of the blocks fed in, not the wall clock,
     so the behaviour is deterministic and testable.
     States: ``closed`` -> ``pending`` (above threshold, not yet long enough)
     -> ``open`` -> back to ``closed`` after ``hang_s`` below the close level.
-    The noise floor only adapts while ``closed``.
+    The noise floor follows the band (EMA) only while ``closed``.
+
+    Stale-floor recovery (``floor_window_s``): voice has pauses, so over any
+    ``floor_window_s`` of real traffic the quietest block sits near the noise.
+    If the squelch has been open that long and even its quietest block in the
+    window is more than ``close_snr_db`` above the floor, the floor is stale
+    (learned too low, e.g. from a KiwiSDR stream's first blocks while its
+    server-side AGC settles, or before the band noise rose at dusk): it is
+    raised to that minimum, so the squelch then closes after ``hang_s``
+    instead of recording noise until ``max_record_seconds``. The floor is only
+    ever raised this way, never lowered. ``None`` or 0 disables it.
     """
 
     def __init__(
@@ -143,13 +154,19 @@ class Squelch:
         min_activity_s: float = 0.8,
         hang_s: float = 4.0,
         alpha: float = 0.05,
+        floor_window_s: float | None = None,
     ):
         self.open_snr_db = open_snr_db
         self.close_snr_db = close_snr_db
         self.min_activity_s = min_activity_s
         self.hang_s = hang_s
         self.alpha = alpha
+        self.floor_window_s = floor_window_s or None
         self.noise_floor_db: float | None = None
+        self.floor_raises = 0  # times the stale-floor recovery raised the floor
+        self._t = 0.0  # stream time (sum of block lengths)
+        self._open_since: float | None = None
+        self._mins: deque[tuple[float, float]] = deque()  # (block end time, level), increasing levels
         self.state = "closed"
         self.pending_s = 0.0
         self.below_s = 0.0
@@ -163,16 +180,24 @@ class Squelch:
         """Feed one block level. Returns "open", "close" or None."""
         if math.isnan(level_db):
             return None
+        self._t += block_s
         if self.noise_floor_db is None:
             self.noise_floor_db = level_db
+        if self.floor_window_s:
+            self._track_min(level_db)
         snr = level_db - self.noise_floor_db
 
         if self.state == "open":
+            if self._stale_floor():
+                self.noise_floor_db = self._mins[0][1]
+                self.floor_raises += 1
+                snr = level_db - self.noise_floor_db
             self.snr_history.append(snr)
             self.below_s = 0.0 if snr >= self.close_snr_db else self.below_s + block_s
             if self.below_s >= self.hang_s:
                 self.state = "closed"
                 self.below_s = 0.0
+                self._open_since = None
                 return "close"
             return None
 
@@ -184,6 +209,7 @@ class Squelch:
                 self.state = "open"
                 self.pending_s = 0.0
                 self.below_s = 0.0
+                self._open_since = self._t - self.min_activity_s
                 return "open"
             return None
 
@@ -199,6 +225,23 @@ class Squelch:
         self.state = "closed"
         self.pending_s = 0.0
         self.below_s = 0.0
+        self._open_since = None
+
+    def _track_min(self, level_db: float) -> None:
+        """Sliding-window minimum of the block levels (monotonic deque)."""
+        q = self._mins
+        while q and q[-1][1] >= level_db:
+            q.pop()
+        q.append((self._t, level_db))
+        while q[0][0] <= self._t - self.floor_window_s:
+            q.popleft()
+
+    def _stale_floor(self) -> bool:
+        if not self.floor_window_s or self._open_since is None or not self._mins:
+            return False
+        if self._t - self._open_since < self.floor_window_s:
+            return False  # the window must hold only audio from this open period
+        return self._mins[0][1] - self.noise_floor_db > self.close_snr_db
 
 
 class Resampler:

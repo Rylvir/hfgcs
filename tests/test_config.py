@@ -76,3 +76,16 @@ def test_load_toml_channel_groups(tmp_path):
     assert len(cfg.channels) == 16
     with pytest.raises(KeyError):
         channels_for("bogus")
+
+
+def test_noise_floor_window_validation():
+    import pytest as _pytest
+
+    from hfgcs.config import Config
+
+    assert Config().noise_floor_window_seconds == 30.0
+    assert Config(noise_floor_window_seconds=0).noise_floor_window_seconds == 0
+    with _pytest.raises(ValueError):
+        Config(noise_floor_window_seconds=-1)
+    with _pytest.raises(ValueError):
+        Config(noise_floor_window_seconds=2.0, hang_seconds=4.0)

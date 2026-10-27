@@ -94,6 +94,7 @@ class ChannelCapture:
             cfg.min_activity_seconds,
             cfg.hang_seconds,
             cfg.noise_floor_alpha,
+            cfg.noise_floor_window_seconds,
         )
         self.ring_len = int(round((cfg.preroll_seconds + cfg.min_activity_seconds) * self.rate))
         self.retune(start_utc)

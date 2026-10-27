@@ -86,3 +86,26 @@ def test_agc_chunked_equals_one_shot_and_levels():
     # Settles to target peak on both levels (no per-chunk normalisation).
     for seg in (one[AUDIO_RATE // 2 : AUDIO_RATE], one[2 * AUDIO_RATE :]):
         assert 0.2 < np.max(np.abs(seg)) < 0.45
+
+
+def test_squelch_stale_floor_raise_only_after_a_full_window_open():
+    from hfgcs.dsp import Squelch
+
+    sq = Squelch(open_snr_db=8, close_snr_db=5, min_activity_s=0.5, hang_s=2.0, alpha=0.05, floor_window_s=10)
+    for _ in range(20):
+        sq.update(-60.0, 0.1)                  # floor -60
+    events = [sq.update(-48.0, 0.1) for _ in range(95)]   # +12 dB, flat: stuck-open noise
+    assert "open" in events and sq.floor_raises == 0 and sq.noise_floor_db == -60.0
+    events = [sq.update(-48.0, 0.1) for _ in range(60)]
+    assert sq.floor_raises == 1 and sq.noise_floor_db == -48.0
+    assert "close" in events and sq.state == "closed"
+
+
+def test_squelch_floor_window_disabled_by_default():
+    from hfgcs.dsp import Squelch
+
+    sq = Squelch(open_snr_db=8, close_snr_db=5, min_activity_s=0.5, hang_s=2.0)
+    for _ in range(20):
+        sq.update(-60.0, 0.1)
+    events = [sq.update(-48.0, 0.1) for _ in range(1000)]
+    assert events.count("close") == 0 and sq.noise_floor_db == -60.0

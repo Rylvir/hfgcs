@@ -129,3 +129,61 @@ def test_save_recording_catalog(tmp_path):
 
     audio, rate = sf.read(line["file"])
     assert rate == 8000 and abs(len(audio) / rate - line["duration_sec"]) < 0.01
+
+
+# -- stale noise floor (4724 / KiwiSDR: 900 s captures of noise at a flat ~10 dB "SNR") ---------------
+def run_amp(c, segments, seed=10):
+    """segments: (seconds, noise_amp, signal_on[, pattern]) where pattern 'speech' keys the
+    tone 0.8 s on / 0.4 s off (voice has pauses)."""
+    cap = ChannelCapture(c, 4724.0, start_utc=T0)
+    recs = []
+    for i, seg in enumerate(segments):
+        secs, amp, on = seg[:3]
+        x = noise(secs, amp, seed=seed + i)
+        if on:
+            t = tone(1000, secs, SIG_AMP)
+            if len(seg) > 3 and seg[3] == "speech":
+                n = len(t)
+                key = (np.arange(n) / 192_000) % 1.2 < 0.8
+                t = t * key
+            x = x + t
+        for ch in chunks(x):
+            recs.extend(cap.feed(ch))
+    return cap, recs
+
+
+def test_noise_rise_after_traffic_no_longer_holds_squelch_open_to_the_cap():
+    """Floor learned on quiet noise; after the EAM the band noise is 12 dB higher. Before the fix
+    the squelch stayed open until max_record_seconds; now it closes about one window later."""
+    c = cfg(max_record_seconds=300.0, noise_floor_window_seconds=30.0)
+    cap, recs = run_amp(c, [(3, NOISE_AMP, False), (10, NOISE_AMP, True), (120, NOISE_AMP * 4, False)])
+    assert len(recs) == 1 and not recs[0].truncated
+    assert recs[0].duration_sec < 1.5 + 30 + c.hang_seconds + 1.0
+    assert cap.squelch.floor_raises >= 1 and not cap.active
+
+
+def test_stale_floor_behaviour_without_the_fix_is_the_old_stuck_squelch():
+    c = cfg(max_record_seconds=60.0, noise_floor_window_seconds=0)
+    _, recs = run_amp(c, [(3, NOISE_AMP, False), (10, NOISE_AMP, True), (70, NOISE_AMP * 4, False)])
+    assert recs and recs[0].truncated and recs[0].duration_sec >= 59
+
+
+def test_floor_learned_too_low_at_stream_start_recovers():
+    """A KiwiSDR stream whose first blocks are near-silent (server AGC settling)."""
+    c = cfg(max_record_seconds=300.0, noise_floor_window_seconds=20.0)
+    cap, recs = run_amp(c, [(0.2, NOISE_AMP / 30, False), (90, NOISE_AMP, False)])
+    assert len(recs) == 1 and not recs[0].truncated and recs[0].duration_sec < 1.5 + 20 + c.hang_seconds + 1
+    # the next real transmission is still caught against the corrected floor
+    for ch in chunks(noise(3, NOISE_AMP, seed=99) + tone(1000, 3, SIG_AMP)):
+        recs.extend(cap.feed(ch))
+    for ch in chunks(noise(4, NOISE_AMP, seed=98)):
+        recs.extend(cap.feed(ch))
+    assert len(recs) == 2
+
+
+def test_long_keyed_voice_with_a_good_floor_is_not_cut():
+    """90 s of 'speech' (pauses every 0.8 s): the pauses keep the window minimum near the floor."""
+    c = cfg(max_record_seconds=300.0, noise_floor_window_seconds=30.0)
+    cap, recs = run_amp(c, [(3, NOISE_AMP, False), (90, NOISE_AMP, True, "speech"), (5, NOISE_AMP, False)])
+    assert len(recs) == 1 and recs[0].duration_sec > 90
+    assert cap.squelch.floor_raises == 0

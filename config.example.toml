@@ -5,6 +5,9 @@ hang_seconds = 4.0
 preroll_seconds = 1.5
 open_snr_db = 8.0
 close_snr_db = 5.0
+# Stale-floor recovery (s): after this long open, if even the quietest moment of the window is
+# > close_snr_db above the floor, the floor is raised to it. 0 disables.
+noise_floor_window_seconds = 30.0
 # channels = [4724, 6739, 8992, 11175, 13200, 15016]
 # Or pick named groups from hfgcs.config.FREQUENCY_GROUPS:
 # channel_groups = ["voice"]            # default
