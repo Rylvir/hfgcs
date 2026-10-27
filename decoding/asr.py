@@ -234,6 +234,9 @@ def _same_model(a: AsrConfig, b: AsrConfig) -> bool:
     return all(getattr(a, f) == getattr(b, f) for f in fields)
 
 
+PRIMARY_SHARE = 0.6  # of max_rtf: the first decode of a window may take 0.6 x 2 = 1.2 x its duration
+
+
 class Transcriber:
     def __init__(self, cfg: Optional[AsrConfig] = None, share_with: Optional["Transcriber"] = None):
         """``share_with``: reuse another Transcriber's loaded WhisperModel when
@@ -381,7 +384,12 @@ class Transcriber:
             pass
         piece = pcm[int(start * 16000) : int(end * 16000)]
         dur = max(0.0, end - start)
-        deadline = time.monotonic() + cfg.max_rtf * max(dur, 5.0) if cfg.max_rtf else None
+        deadline = None
+        if cfg.max_rtf:  # first decodes get PRIMARY_SHARE of the cap, the whole-decode budget bounds the rest
+            deadline = time.monotonic() + PRIMARY_SHARE * cfg.max_rtf * max(dur, 5.0)
+        budget = getattr(self, "_budget_end", None)
+        if budget is not None:
+            deadline = budget if deadline is None else min(deadline, budget)
         segs, _ = model.transcribe(
             piece,
             vad_filter=cfg.vad_filter,
@@ -411,7 +419,9 @@ class Transcriber:
                 "reason": status,
                 "resume_at": round(at, 2),
             }
-            if cfg.fallback and end - at > 1.0:
+            if self._out_of_budget():
+                entry["fallback_status"] = "skipped: wall-time budget spent"
+            elif cfg.fallback and end - at > 1.0:
                 fb = replace(cfg, **cfg.fallback)
                 more, status2, _ = self._decode_span(model, pcm, at, end, fb, day_callsigns)
                 segs += more
@@ -419,7 +429,26 @@ class Transcriber:
             guard["fallbacks"].append(entry)
         return segs
 
+    def _out_of_budget(self) -> bool:
+        b = getattr(self, "_budget_end", None)
+        return b is not None and time.monotonic() >= b
+
     def _windowed(self, model, pcm, duration, day_callsigns) -> tuple[list[dict], dict]:
+        """Windows, then loop/timeout fallbacks and coverage repairs, all inside
+        one wall-time budget of ``max_rtf`` x duration (+ the segment being
+        decoded when it runs out). First decodes of each window may use
+        PRIMARY_SHARE of their own share so a slow window leaves time for its fallback."""
+        c = self.cfg
+        t0 = time.monotonic()
+        self._budget_end = t0 + c.max_rtf * max(duration, 5.0) if c.max_rtf else None
+        try:
+            segs, guard = self._windowed_inner(model, pcm, duration, day_callsigns)
+        finally:
+            self._budget_end = None
+        guard["wall_s"] = round(time.monotonic() - t0, 1)
+        return segs, guard
+
+    def _windowed_inner(self, model, pcm, duration, day_callsigns) -> tuple[list[dict], dict]:
         c = self.cfg
         rms = frame_rms(pcm)
         bounds = window_bounds(rms, duration, c.window_s, c.window_search_s)
@@ -432,6 +461,11 @@ class Transcriber:
             repair_cfg = replace(c, condition_on_previous_text=False)
             for g0, g1 in word_gaps(words, duration, c.gap_repair_s):
                 if active_fraction(rms, g0, g1) < 0.5:
+                    continue
+                if self._out_of_budget():
+                    guard["repairs"].append(
+                        {"start": g0, "end": g1, "words": 0, "skipped": "wall-time budget spent"}
+                    )
                     continue
                 found = self._guarded_span(
                     model, pcm, max(0.0, g0 - 1.0), min(duration, g1 + 1.0), day_callsigns, guard, repair_cfg

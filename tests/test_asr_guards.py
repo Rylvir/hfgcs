@@ -52,8 +52,9 @@ class FakeModel:
     ``stop_after`` seconds (a Whisper skip that drops the rest), and an
     optional runaway loop from ``loop_at`` seconds. Records each call."""
 
-    def __init__(self, stop_after=None, loop_at=None, loop_only_without_vad=True):
+    def __init__(self, stop_after=None, loop_at=None, loop_only_without_vad=True, tick=None):
         self.stop_after, self.loop_at, self.loop_only_without_vad = stop_after, loop_at, loop_only_without_vad
+        self.tick = tick or (lambda: None)
         self.calls = []
 
     def transcribe(self, piece, vad_filter=False, vad_parameters=None, **kw):
@@ -67,6 +68,7 @@ class FakeModel:
             while t + 9 <= dur:
                 if self.stop_after is not None and t >= self.stop_after and len(self.calls) == 1:
                     return
+                self.tick()
                 looping = self.loop_at is not None and t >= self.loop_at
                 if looping and (vad_filter is False or not self.loop_only_without_vad):
                     yield _seg(t, ["Delta"] * 60, step=0.1)  # 60 words in 6 s
@@ -150,15 +152,27 @@ def test_loop_resumes_with_fallback():
 
 
 def test_wall_time_cap(monkeypatch):
-    """Each segment 'takes' 30 s of wall time on a 60 s window: past 2x the
-    span the decode is cut and the rest goes to the fallback."""
-    clock = iter(range(0, 10_000, 30))
-    monkeypatch.setattr("decoding.asr.time.monotonic", lambda: next(clock))
-    m = FakeModel()
-    r = _tr(m, gap_repair_s=None).transcribe_pcm(_noise(60.0))
-    (fb,) = r["guard"]["fallbacks"]
-    assert fb["reason"] == "timeout" and 0 < fb["resume_at"] < 60.0
+    """Each segment takes 20 s of (fake) wall time. A 60 s clip has a 2 x 60 =
+    120 s budget; its first decode may use 0.6 of it (72 s), then the fallback
+    gets the rest, and nothing runs past the budget."""
+    now = [0.0]
+    monkeypatch.setattr("decoding.asr.time.monotonic", lambda: now[0])
+    m = FakeModel(tick=lambda: now.__setitem__(0, now[0] + 20.0))
+    r = _tr(m).transcribe_pcm(_noise(60.0))
+    fbs = r["guard"]["fallbacks"]
+    assert fbs[0]["reason"] == "timeout" and 0 < fbs[0]["resume_at"] < 60.0
     assert m.calls[1]["vad_filter"] is True
+    assert r["guard"]["wall_s"] <= 2 * 60 + 20  # budget + the segment in flight
+
+
+def test_budget_spent_skips_fallback_and_repairs(monkeypatch):
+    now = [0.0]
+    monkeypatch.setattr("decoding.asr.time.monotonic", lambda: now[0])
+    m = FakeModel(stop_after=10.0, tick=lambda: now.__setitem__(0, now[0] + 200.0))
+    r = _tr(m).transcribe_pcm(_noise(100.0))
+    assert len(m.calls) == 1
+    assert r["guard"]["fallbacks"][0]["fallback_status"].startswith("skipped")
+    assert all(x.get("skipped") for x in r["guard"]["repairs"])
 
 
 def test_long_audio_is_windowed():
