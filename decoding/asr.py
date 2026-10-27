@@ -242,6 +242,9 @@ def _same_model(a: AsrConfig, b: AsrConfig) -> bool:
     return all(getattr(a, f) == getattr(b, f) for f in fields)
 
 
+# A single segment counts as a loop above SEGMENT_WPS_FACTOR x max_words_per_s (6 words/s by
+# default): fast test counts ("15, 1, 2, 3, 2, 3, 1") run ~4 words/s by Whisper's timestamps.
+SEGMENT_WPS_FACTOR = 2.0
 PRIMARY_SHARE = 0.6  # of max_rtf: the first decode of a window may take 0.6 x 2 = 1.2 x its duration
 
 
@@ -381,9 +384,9 @@ class Transcriber:
 
     def _decode_span(self, model, pcm, start: float, end: float, cfg: AsrConfig, day_callsigns) -> tuple:
         """One independent decode of [start, end) under the guards. Returns
-        (segments, status, resume_at): status is ok, loop (a looping segment,
-        not kept, started at resume_at) or timeout (wall time passed
-        ``max_rtf`` x span; output after resume_at is missing)."""
+        (segments, status, resume_at, rejected): status is ok, loop (a looping
+        segment, not kept but returned as ``rejected``, started at resume_at)
+        or timeout (wall time passed the cap; output after resume_at is missing)."""
         try:
             import ctranslate2
 
@@ -408,24 +411,25 @@ class Transcriber:
         for s in segs:  # a generator: breaking out stops decoding
             d = self._segment_dict(s, start)
             n_words += len(d["words"])
-            if segment_is_loop(d, cfg.max_words_per_s):
+            seg_wps = SEGMENT_WPS_FACTOR * cfg.max_words_per_s
+            if segment_is_loop(d, seg_wps):
                 kept = collapse_repeats(d["words"])  # salvage the words before/around the loop
                 d = {**d, "words": kept, "text": " ".join(w["word"] for w in kept), "collapsed": True}
-                if segment_is_loop(d, cfg.max_words_per_s):
-                    return out, "loop", max(start, min(d["start"], end))
+                if segment_is_loop(d, seg_wps):
+                    return out, "loop", max(start, min(d["start"], end)), d
                 n_words = sum(len(x["words"]) for x in out) + len(kept)
             if n_words > cfg.max_words_per_s * max(dur, 1.0) + 10:
-                return out, "loop", max(start, min(d["start"], end))
+                return out, "loop", max(start, min(d["start"], end)), d
             out.append(d)
             if deadline is not None and time.monotonic() > deadline:
-                return out, "timeout", max(start, min(d["end"], end))
-        return out, "ok", end
+                return out, "timeout", max(start, min(d["end"], end)), None
+        return out, "ok", end, None
 
     def _guarded_span(self, model, pcm, start, end, day_callsigns, guard, cfg=None) -> list[dict]:
         """Decode [start, end); if it loops or runs over time, keep what came
         before the problem and decode the rest once more with ``cfg.fallback``."""
         cfg = cfg or self.cfg
-        segs, status, at = self._decode_span(model, pcm, start, end, cfg, day_callsigns)
+        segs, status, at, rejected = self._decode_span(model, pcm, start, end, cfg, day_callsigns)
         if status != "ok":
             entry = {
                 "start": round(start, 2),
@@ -437,9 +441,14 @@ class Transcriber:
                 entry["fallback_status"] = "skipped: wall-time budget spent"
             elif cfg.fallback and end - at > 1.0:
                 fb = replace(cfg, **cfg.fallback)
-                more, status2, _ = self._decode_span(model, pcm, at, end, fb, day_callsigns)
-                segs += more
+                more, status2, _, _ = self._decode_span(model, pcm, at, end, fb, day_callsigns)
                 entry["fallback_status"] = status2
+                if status2 == "loop" and rejected is not None and not any(x["words"] for x in more):
+                    # Both decodes "loop" at the same place: more likely fast real speech
+                    # (test counts) than a hallucination, so keep the first pass's segment.
+                    more = [rejected]
+                    entry["kept_first_pass"] = True
+                segs += more
             guard["fallbacks"].append(entry)
         return segs
 

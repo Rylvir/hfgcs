@@ -233,3 +233,34 @@ def test_fixture_covers_the_whole_recording():
     assert 0.2 <= word_coverage(words, dur) <= 0.7
     gaps = word_gaps(words, dur, 30.0)
     assert len(gaps) <= 1  # only the silence between the two clips
+
+
+def test_fast_test_count_is_not_a_loop():
+    """eam-b858e080: 'This is Elmer Dorf ... test count, 15, 1, 2, 3, 2, 3, 1 ...' is
+    26 words in 7 s (3.7 words/s). It must be kept, not treated as a loop."""
+    text = (
+        "This is Elmer Dorf. Elmer Dorf is in the test count, 15, 1, 2, 3, 2, 3, 1. "
+        "Elmer Dorf is in the test count out."
+    ).split()
+
+    class Fast(FakeModel):
+        def transcribe(self, piece, vad_filter=False, vad_parameters=None, **kw):
+            self.calls.append(1)
+            return iter([_seg(32.4, text, step=7.0 / len(text))]), None
+
+    m = Fast()
+    r = _tr(m).transcribe_pcm(_noise(43.0))
+    assert len(r["words"]) == len(text) and r["guard"]["fallbacks"] == []
+
+
+def test_first_pass_kept_when_fallback_also_loops():
+    class Dense(FakeModel):
+        def transcribe(self, piece, vad_filter=False, vad_parameters=None, **kw):
+            self.calls.append(vad_filter)
+            return iter([_seg(0.0, [f"W{k}" for k in range(40)], step=0.1)]), None
+
+    m = Dense()
+    r = _tr(m, gap_repair_s=None).transcribe_pcm(_noise(30.0))
+    (fb,) = r["guard"]["fallbacks"]
+    assert fb["fallback_status"] == "loop" and fb["kept_first_pass"] is True
+    assert len(r["words"]) == 40 and m.calls == [False, True]
