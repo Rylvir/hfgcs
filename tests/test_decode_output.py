@@ -362,3 +362,17 @@ def test_committed_sample_fixture():
     assert doc["recording"]["schema"] == 2 and doc["recording"]["receiver_id"] == "eval-synthetic"
     assert len({b["broadcast_id"] for b in doc["broadcasts"]}) == len(doc["broadcasts"])
     assert all(b["broadcast_id"].startswith(doc["recording"]["sha256"][:12] + "@") for b in doc["broadcasts"])
+
+
+def test_run_main_exit_codes(tmp_path, capsys):
+    """Worker contract: 2 = unreadable input list, 1 = some recording missing or
+    failed (the rest still processed), 0 = all decoded or up to date."""
+    from decoding.run import main
+
+    assert main([str(tmp_path / "nope.jsonl"), "--nice", "0"]) == 2
+    cat = tmp_path / "catalog.jsonl"
+    cat.write_text(json.dumps({"file": "missing.wav", "sha256": "0" * 64}) + "\n")
+    assert main([str(cat), "--nice", "0"]) == 1
+    assert capsys.readouterr().out.strip().endswith("decoded 0, up to date 0, failed 1")
+    cat.write_text("")
+    assert main([str(cat), "--nice", "0"]) == 0
