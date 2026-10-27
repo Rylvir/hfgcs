@@ -527,6 +527,49 @@ CPU-seconds per second of audio per pass. A 96 s gold clip where the vote fired 
 each. On hilltop (i5-6400, 4 cores, other load, `Nice=19`/`CPUWeight=10`) expect roughly real time when about
 one core is idle, and up to ~3x real time for a clip where the vote fires (three passes).
 
+### Worker integration with decoding 0.3.x (note for the Engineering Lead, 2026-10-26)
+`decoding.worker` already decodes through `decode_recording`, so it gets 0.3.x's float32, windowing, loop guard and
+budget without code changes. The version bump (`decoding/0.3.1;…;asr=437b8c03f291;…`) makes every clip due once
+more. To run the decoder by hand, or from another scheduler:
+
+    nice -n 19 python -m decoding.run <catalog.jsonl> --max-rtf 2 --cpu-threads 3 [--jsonl decodes.jsonl] [--limit N]
+
+- **Exit codes.** 0 means every recording was decoded or already up to date. 1 means at least one was missing or failed;
+  the others were still processed and the traceback is in the log. 2 means the input list could not be read. Each
+  recording gets one INFO line on stderr: duration, wall time, RTF, words, coverage, windows, fallbacks, repairs and
+  whether the second pass fired. The summary `decoded N, up to date N, failed N` goes to stdout.
+- **Idempotency.** A recording whose `<audio>.decode.json` already has the same sha256 and `decoder_version` is
+  skipped, so re-running over a growing catalog is cheap. `--force` decodes again. Lines are appended to
+  `decodes.jsonl` under an flock, so concurrent runs are safe. `decoding.run` adds nice +10 on its own (`--nice`).
+  `nice -n 19` or the unit's `Nice=19`/`CPUWeight=10` is still the right setting on hilltop.
+- **Threads.** Use 3 on hilltop (4 cores; the recorders and OpenWebRX come first). float32 output does not depend on
+  the thread count, so any setting gives the same decode.
+- **Time.** float32 small.en first pass runs at about 0.35 RTF at 8 threads on an idle box, and 0.5–0.6 at 4 threads
+  under load. Expect about real time at 3 threads on hilltop. On bad audio, Whisper's temperature retries push a pass
+  to the cap: `--max-rtf 2` bounds each ASR pass, including its fallbacks and repairs, at 2× the clip length. When the
+  vote fires there are three passes, so the worst case is about 6× plus model load. That is still inside the worker's
+  own 10× process kill (`--timeout-factor`). A clip that hits the inner cap is decoded anyway, with
+  `asr.guard.fallbacks[].reason = "timeout"`. It is not a failure.
+- **Memory.** Peak RSS was 3.3 GB for the 374 s two-EAM sample at 8 threads with the vote firing (float32 weights
+  are about 1 GB, 4× int8's). Budget for about 3–3.5 GB for the decode child on hilltop.
+- **Feeding the DB.** The sidecars (`<audio>.decode.json`) or the `decodes.jsonl` lines are contract-v1 documents,
+  and they go straight into `scripts/hfgcs_db.py --db $HFGCS_DB load-decodes <files>` from #11. The worker does this
+  per clip. load-decodes keeps human-edited rows and dedups on `(decoder_version, record_sha256)`. 0.3 adds an
+  optional `asr.guard` object, which is in `docs/decode.schema.json`. The loader ignores it.
+
+### Known issues (decoding 0.3.1, shipped as-is so hilltop has decodes)
+- **eam-b858e080 (43 s gold radio check) now gives 0 words** (25 with the old int8 cache). The first segment and its
+  VAD fallback are both judged loops and dropped. The fix is in progress.
+- **eam-8c26a8bf (96 s gold EAM) is typed Skyking, with body CER 1.0** (0.56 with the old int8 cache). float32 hears
+  "Skyking" in the opening, and the first pass skips 39–73 s; the coverage repair gets those words back.
+- **The full gold/silver re-measure is pending.** The 5-clip sanity check gave identical output across runs and these
+  body CERs against the int8 cache: eam-356f1a01 0.17 (0.27), eam-f27e2d58 0.57 (0.67), eam-8c26a8bf 1.00 (0.56).
+  Earlier partial numbers: fresh int8 gold first pass 0.803 (0.855 with the vote), silver first pass 0.568; float32
+  gold first pass 0.683 before the budget and loop-salvage changes. The 0.542 / 0.486 gold figures came from int8
+  cached output and cannot be reproduced.
+- **RTF can reach 2× real time per pass on bad audio** (wall-time cap), and 1.3–2 was seen on 3 of 5 gold clips
+  under load.
+
 ## 3. Labelled evaluation set
 
 ### Sources and license check
