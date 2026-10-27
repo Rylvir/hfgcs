@@ -1,0 +1,42 @@
+# Decode worker: watches the recorder catalog, decodes new captures (small.en + vote,
+# voice-gated), loads them into the review DB. systemd --user unit for `scribe` on hilltop.
+# Install: docs/deploy.md "Decode service". It never touches a recorder; a deploy restarts it
+# only when decoding/ (or its unit file, wrapper or the decode extra) changes.
+[Unit]
+Description=HFGCS decode worker (ASR + EAM parser -> review DB), low priority
+Documentation=file://%h/hfgcs-app/docs/decoding.md
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/hfgcs-app
+Environment=HFGCS_PYTHON=%h/hfgcs-app/.venv/bin/python
+Environment=PYTHONUNBUFFERED=1
+# Never download at run time: the model is fetched once with --prefetch.
+Environment=HF_HUB_OFFLINE=1
+EnvironmentFile=%h/.config/hfgcs/decode.env
+ExecStart=%h/hfgcs-app/deploy/bin/hfgcs-python -m decoding.worker
+# Exit 78 = dependency or model missing (message in the journal): do not restart-loop on it.
+Restart=on-failure
+RestartSec=60
+RestartPreventExitStatus=78
+# Stop: SIGTERM to the worker only; it kills its decode child itself (the clip is retried later).
+KillMode=mixed
+TimeoutStopSec=30
+
+# Low priority: the recorders and OpenWebRX always come first.
+Nice=19
+CPUWeight=10
+IOSchedulingClass=idle
+# Measured: small.en int8 + the vote pass peaked at 1.6 GB RSS on a 96 s clip; float32
+# (decoding-fixes) and 15-minute clips need more. MemoryHigh throttles first; MemoryMax is the
+# hard stop (a killed child is recorded as failed and retried). hilltop has ~12 GB free.
+MemoryHigh=3G
+MemoryMax=4G
+MemorySwapMax=0
+TasksMax=64
+NoNewPrivileges=yes
+UMask=0022
+
+[Install]
+WantedBy=default.target

@@ -11,6 +11,7 @@ Code that exists today (prototype, stdlib only, branch `decoding-design`):
 | `decoding/tokens.py` | ASR word tokens, NATO/ICAO + HF variants (niner, tree, fife) to characters, spoken numbers |
 | `decoding/eam_parser.py` | Grammar parser: `parse_transcript`, `parse_eam`, `parse_skyking`, segmentation, radio checks (test counts) |
 | `decoding/output.py`, `decoding/run.py` | Per-recording decode document and its writer, `python -m decoding.run` (see "Decode output") |
+| `decoding/worker.py`, `decoding/voice_gate.py` | Decode service: watches the catalog, voice gate, per-clip time cap, load-decodes (see "Decode service") |
 | `decoding/align.py` | Read 1 / read 2 alignment and per-character consensus confidence |
 | `decoding/rebroadcast.py` | Links airings of one message across time, frequency and receiver |
 | `decoding/metrics.py` | CER, field exact-match, detection precision/recall |
@@ -434,6 +435,56 @@ with the same sha256 and `decoder_version` is skipped (`--force` re-decodes). `-
 All times are file-relative; absolute time = `recording.file_start_utc + start_s`. When `recording.truncated` is
 true the last broadcast also gets the flag `truncated`. Timings and word spans always refer to the **first** ASR
 pass: the second-pass vote only replaces `body` (keeping `body_first_pass`), so spans stay valid.
+
+## Decode service (`python -m decoding.worker`, unit `hfgcs-decode`)
+
+The long-running worker that turns new captures into rows on the review page. Install steps for hilltop:
+docs/deploy.md "Decode service".
+
+| Mode | What it does |
+|---|---|
+| (default) | watch loop: every `--poll` s (30), process captures whose `end_utc` is after the worker's first start |
+| `--once` | one pass of the watch loop, then exit |
+| `--backfill` | every capture in the catalog, older ones included, oldest first; repeats until nothing is left; exits (`hfgcs-decode-backfill.service`) |
+| `--check` / `--prefetch` / `--status` | readiness check (exit 78 if not ready) / download the model / per-capture state |
+
+Per capture, one at a time (a lock file in the state dir also serialises a backfill running beside the unit):
+
+1. **Ingest**: when the catalog grew, `hfgcs_db.py ingest-catalog` (idempotent), so every capture is on the
+   review page even before or without a decode.
+2. **Voice gate** (`decoding/voice_gate.py`): ffmpeg `bp_norm` to 16 kHz, then silero-vad (bundled with
+   faster-whisper) at threshold 0.3; under 1.0 s of speech, or digital silence, the clip is recorded as
+   `no_voice` and not decoded. Deliberately permissive (silero misses weak HF speech, see "VAD" above); the ASR
+   still runs with VAD off. `--no-gate`, `--gate-threshold`, `--min-speech`.
+3. **Decode** in a child process (`decode_recording`: `small.en`, parser, vote3 second pass when the reads
+   disagree) writing the sidecar and a `decodes.jsonl` line, as `python -m decoding.run` does. The child runs
+   in its own process group under a **wall-time cap** of `--timeout-factor` (10) x the clip length, clamped to
+   `--timeout-min` (120 s, covers model load) .. `--timeout-max` (3600 s); over the cap the group is SIGTERMed,
+   then SIGKILLed, and the clip is recorded as `timeout`. Failures and timeouts are tried `--max-attempts` (2)
+   times in all; `--retry-failed` tries them again.
+4. **Load**: `hfgcs_db.py --db $HFGCS_DB load-decodes <sidecar>`. load-decodes keeps rows a person edited or
+   checked (the new machine copy is stored beside them, unapplied). A failed load is retried on the next pass
+   without decoding again.
+
+Idempotency: `~/.local/state/hfgcs/decode-state.json` keyed by the catalog sha256 holds each clip's verdict and
+the `decoder_version` (and the gate settings for `no_voice`). A finished clip is skipped; a new decoder version
+(package version, ASR config, parser schema, second-pass mode) makes every clip due again. Underneath, the
+sidecar check in `decode_recording` and load-decodes' `(decoder_version, record_sha256)` dedup make a repeat a
+no-op. `decode-history.jsonl` beside it has one line per clip: status, wall seconds, clip length, broadcasts.
+
+The worker is stdlib only and never imports faster-whisper itself. The child needs the `decode` extra
+(`pip install -e '.[decode]'`: faster-whisper plus imageio-ffmpeg, whose static ffmpeg is linked into
+`~/.cache/hfgcs/bin` when the system has no `ffmpeg`) and the model in the Hugging Face cache
+(`python -m decoding.worker --prefetch`; `small.en` is ~460 MB). Without them the worker exits 78 with the install
+steps, and the unit does not restart-loop. Settings come from flags or `~/.config/hfgcs/decode.env`
+(`deploy/env/decode.env.example`): `HFGCS_DB`, `HFGCS_CATALOG`, `HFGCS_DECODE_MODEL`, `HFGCS_DECODE_THREADS`
+(3 on hilltop), `HFGCS_DECODE_TIMEOUT_*`, `HFGCS_DECODE_POLL_S`.
+
+Cost (measured 2026-10-26 on the box, 3 threads at nice 19 on a heavily loaded 8-vCPU Xeon): the 207 s gold
+clip took 307 s wall but only ~120 CPU-seconds (first pass only; the vote did not fire), i.e. about 0.6
+CPU-seconds per second of audio per pass. A 96 s gold clip where the vote fired (three passes) took 192 CPU-seconds and peaked at 1.6 GB RSS. The gate rejected 30 s of pink noise and a 20 s tone in about 1 s
+each. On hilltop (i5-6400, 4 cores, other load, `Nice=19`/`CPUWeight=10`) expect roughly real time when about
+one core is idle, and up to ~3x real time for a clip where the vote fires (three passes).
 
 ## 3. Labelled evaluation set
 

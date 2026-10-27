@@ -37,8 +37,10 @@ checkout, not a fast-forward).
 1. Records the deployed SHA, refuses a dirty checkout, `git fetch`es and fast-forwards to `--ref`
    (default `origin/main`). It never merges, rebases or resets. Then it re-runs the *new* copy of the
    script for the remaining steps (`--since <old sha>`).
-2. Reinstalls (`.venv/bin/python -m pip install -e '.[openwebrx]'`) only if `pyproject.toml` changed. If the
-   dependency lists changed, every unit counts as changed.
+2. Reinstalls (`.venv/bin/python -m pip install -e '.[openwebrx]'`, plus `decode` once `hfgcs-decode` is
+   installed) only if `pyproject.toml` changed. If the core `dependencies` or `requires-python` changed, every
+   unit counts as changed; if only an optional extra changed, only the units that use it do (`openwebrx`:
+   `hfgcs-8992`; `decode`/`asr`: `hfgcs-decode`; `dev`: none; an unknown extra: every unit).
 3. If the review DB (`$HFGCS_DB`, else `HFGCS_DB` in `~/.config/hfgcs/review.env`, else `data/hfgcs.db`)
    has pending `migrations/NNNN_*.sql`, it backs it up to `data/backups/hfgcs-<UTC>-<old sha>.db`
    (SQLite online backup) and applies them. A failure stops the deploy before any restart.
@@ -51,16 +53,20 @@ checkout, not a fast-forward).
    | `hfgcs/dsp.py`, `hfgcs/capture.py`, `hfgcs/config.py`, `hfgcs/runstate.py`, `hfgcs/sources/base.py`, `hfgcs/sources/__init__.py`, `hfgcs_scanner.py` | all recorders |
    | `hfgcs/review_app.py`, `hfgcs/review_db.py`, `hfgcs/db_migrations.py`, `migrations/*` | `hfgcs-review` |
    | `hfgcs/static_site.py`, `public_site/*` | `hfgcs-public` |
-   | `deploy/bin/hfgcs-python` | `hfgcs-review`, `hfgcs-public` |
-   | `hfgcs/__init__.py`, dependency changes in `pyproject.toml` | everything |
-   | `deploy/systemd/<unit>.service` | that unit: the installed copy in `~/.config/systemd/user/` is replaced (old one kept as `.bak-<UTC>`), then `daemon-reload` and a restart. Units that are not installed are never installed or started. |
-   | anything else: docs, tests, `decoding/`, `scripts/`, the deploy tool itself | nothing |
+   | `decoding/*` | `hfgcs-decode` only (the recorders never import `decoding/`) |
+   | `deploy/bin/hfgcs-python` | `hfgcs-review`, `hfgcs-public`, `hfgcs-decode` |
+   | `hfgcs/__init__.py`, core dependency changes in `pyproject.toml` | everything |
+   | an optional extra in `pyproject.toml` | the units that use it (step 2) |
+   | `deploy/systemd/<unit>.service` | that unit: the installed copy in `~/.config/systemd/user/` is replaced (old one kept as `.bak-<UTC>`), then `daemon-reload` and a restart. Units that are not installed are never installed or started. `hfgcs-decode-backfill` (one-shot) is installed but never started. |
+   | anything else: docs, tests, `scripts/` (incl. `hfgcs_db.py`, which the decode worker runs as a fresh subprocess per load), `deploy/env/*`, the deploy tool itself | nothing |
 
    Units are found with `systemctl --user list-unit-files 'hfgcs-*'` and classified by name. Restarts left
    over from an earlier run (deferred or skipped) are added; they live in
    `~/.local/state/hfgcs/pending-restarts.json`.
-5. Restarts, strictly one at a time, in this order: `hfgcs-review`, `hfgcs-public`, the `hfgcs-kiwi-*` units
-   by name, and `hfgcs-8992` **last**. Stopped units are left stopped.
+5. Restarts, strictly one at a time, in this order: `hfgcs-review`, `hfgcs-public`, `hfgcs-decode`, the
+   `hfgcs-kiwi-*` units by name, and `hfgcs-8992` **last**. Stopped units are left stopped. `hfgcs-decode` is
+   not a recorder: it restarts without an idle wait and inside quiet windows (its in-flight clip is decoded
+   again on the next start).
    - **Recorders wait for idle.** Each recorder writes a state file (below). The script restarts it only
      once it has been `idle` for `--min-idle` seconds (default 30), polling every 2 s for up to
      `--idle-timeout` (default 10 min). A recorder that is still capturing is skipped and remembered.
@@ -123,3 +129,51 @@ deploy/deploy.sh --since e6ca4dd --force hfgcs-8992 --force hfgcs-kiwi-11175 ...
 
 `--force` restarts a recorder without a state file without the idle check, so pick a quiet moment. From
 then on every recorder writes its state file and plain `deploy/deploy.sh` is enough.
+
+## Decode service (`hfgcs-decode`)
+
+`hfgcs-decode.service` runs `python -m decoding.worker`: it watches `hfgcs_catalog.jsonl`, voice-gates each new
+capture, decodes it with `small.en` plus the vote pass in a child process under a wall-time cap, and loads the
+result with `hfgcs_db.py load-decodes`, so it shows on the review page. Details: docs/decoding.md "Decode
+service". It runs at `Nice=19`, `CPUWeight=10`, `IOSchedulingClass=idle`, `MemoryHigh=3G`/`MemoryMax=4G`, and
+it never touches a recorder, OpenWebRX or a KiwiSDR.
+
+### Adding it on hilltop (no recorder restart)
+
+As `scribe`, never sudo. None of these steps restarts a recorder, so they are fine inside a quiet window;
+the decode work itself is low priority. First get the code (normally `deploy/deploy.sh` once this is merged:
+the only units it could touch are `hfgcs-decode*`, which are not installed yet, so it restarts nothing and
+reinstalls `.[openwebrx]` because pyproject.toml changed; check with `--dry-run` first).
+
+```bash
+cd ~/hfgcs-app
+deploy/deploy.sh --dry-run                     # expect: plan: no unit needs a restart
+deploy/deploy.sh
+
+# 1. The decode extra: faster-whisper (CTranslate2, onnxruntime for silero-vad, tokenizers,
+#    huggingface_hub, PyAV) and imageio-ffmpeg (a static ffmpeg; hilltop has no ffmpeg binary). ~350 MB.
+.venv/bin/python -m pip install -e '.[openwebrx,decode]'
+
+# 2. The model, once (small.en, ~460 MB into ~/.cache/huggingface). The unit runs with HF_HUB_OFFLINE=1.
+.venv/bin/python -m decoding.worker --prefetch
+.venv/bin/python -m decoding.worker --check     # "ready: model small.en, ffmpeg ..., decoder_version ..."
+
+# 3. Settings (no secrets): DB path, catalog, model, threads, caps.
+install -m 600 deploy/env/decode.env.example ~/.config/hfgcs/decode.env
+
+# 4. The units. Copying new unit files and daemon-reload restart nothing that is running.
+cp deploy/systemd/hfgcs-decode.service deploy/systemd/hfgcs-decode-backfill.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now hfgcs-decode
+journalctl --user -fu hfgcs-decode               # "first start: watching captures that end after ..."
+
+# 5. The captures recorded before step 4 (one-shot; shares the one-clip-at-a-time lock with hfgcs-decode).
+systemctl --user start --no-block hfgcs-decode-backfill
+journalctl --user -fu hfgcs-decode-backfill
+.venv/bin/python -m decoding.worker --status    # per capture: decoded / no_voice / timeout / failed / new
+```
+
+Exit status 78 means a dependency or the model is missing; the unit then stays stopped (no restart loop) and
+the journal says what to install. To stop decoding: `systemctl --user stop hfgcs-decode` (the clip in progress
+is decoded again on the next start). State: `~/.local/state/hfgcs/decode-state.json` and
+`decode-history.jsonl` (one line per clip with wall time and result).

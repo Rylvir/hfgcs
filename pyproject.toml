@@ -28,6 +28,11 @@ dev = ["pytest>=7", "ruff>=0.4", "websockets>=12"]
 # Speech-to-text for decoding/asr.py (CTranslate2 Whisper + silero VAD).
 # Also needs the ffmpeg binary on PATH (audio decode and preprocessing).
 asr = ["faster-whisper>=1.1"]
+# The decode service (python -m decoding.worker, hfgcs-decode.service): the ASR stack plus a
+# static ffmpeg build (imageio-ffmpeg) used when the system has no ffmpeg binary, so no
+# apt/sudo step is needed. Model weights are fetched once with
+# `python -m decoding.worker --prefetch` (small.en, ~460 MB in ~/.cache/huggingface).
+decode = ["faster-whisper>=1.1", "imageio-ffmpeg>=0.5"]
 
 [project.scripts]
 hfgcs-scanner = "hfgcs_scanner:main"

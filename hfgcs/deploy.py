@@ -37,13 +37,19 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10
 # -- units and roles -------------------------------------------------------------------------
 
 OPENWEBRX, KIWI, REVIEW, PUBLIC = "openwebrx", "kiwisdr", "review", "public"
+DECODE = "decode"  # hfgcs-decode: the long-running decode worker (python -m decoding.worker)
+# hfgcs-decode-backfill: a one-shot run started by hand. A deploy installs its changed unit file
+# but never starts it (a restart would launch a whole backfill).
+ONESHOT = "oneshot"
 RECORDERS = frozenset({OPENWEBRX, KIWI})
 WEB = frozenset({REVIEW, PUBLIC})
-ALL_ROLES = RECORDERS | WEB
+ALL_ROLES = RECORDERS | WEB | {DECODE}
 
 # Changed path (fnmatch pattern, repo-relative) -> roles whose units must restart.
-# First match wins. Anything that matches nothing (docs, tests, decoding/, scripts/,
-# the deploy tool itself, ...) restarts nothing.
+# First match wins. Anything that matches nothing (docs, tests, scripts/, the deploy tool
+# itself, ...) restarts nothing. decoding/ is used only by hfgcs-decode: the recorders never
+# import it, so a decoder change never restarts a recorder. scripts/hfgcs_db.py needs no
+# restart either: the decode worker runs it as a fresh subprocess for every load.
 PATH_RULES: list[tuple[str, frozenset[str]]] = [
     ("hfgcs/sources/openwebrx.py", frozenset({OPENWEBRX})),
     ("hfgcs/sources/kiwisdr.py", frozenset({KIWI})),
@@ -60,19 +66,26 @@ PATH_RULES: list[tuple[str, frozenset[str]]] = [
     ("migrations/*", frozenset({REVIEW})),
     ("hfgcs/static_site.py", frozenset({PUBLIC})),
     ("public_site/*", frozenset({PUBLIC})),
-    ("deploy/bin/hfgcs-python", WEB),  # the web units' ExecStart wrapper
+    ("decoding/*", frozenset({DECODE})),
+    ("deploy/bin/hfgcs-python", WEB | {DECODE}),  # ExecStart wrapper of the web and decode units
     ("hfgcs/__init__.py", ALL_ROLES),
 ]
 UNIT_FILE_DIR = "deploy/systemd/"
+DEFAULT_PIP_SPEC = ".[openwebrx]"
 
 
 def role_of(unit: str) -> str | None:
-    """Role by naming convention: hfgcs-<kHz> (OpenWebRX), hfgcs-kiwi-*, hfgcs-review, hfgcs-public."""
+    """Role by naming convention: hfgcs-<kHz> (OpenWebRX), hfgcs-kiwi-*, hfgcs-review, hfgcs-public,
+    hfgcs-decode (worker) and hfgcs-decode-backfill (one-shot, never restarted)."""
     unit = safe_name(unit)
     if unit == "hfgcs-review":
         return REVIEW
     if unit == "hfgcs-public":
         return PUBLIC
+    if unit == "hfgcs-decode":
+        return DECODE
+    if unit == "hfgcs-decode-backfill":
+        return ONESHOT
     if unit.startswith("hfgcs-kiwi-"):
         return KIWI
     if re.fullmatch(r"hfgcs-\d+(\.\d+)?", unit):
@@ -95,8 +108,8 @@ def unit_file_unit(path: str) -> str | None:
 
 
 def order_key(unit: str) -> tuple:
-    """Web units first, then Kiwi units one by one, OpenWebRX (hfgcs-8992) last."""
-    rank = {REVIEW: 0, PUBLIC: 1, None: 2, KIWI: 3, OPENWEBRX: 4}[role_of(unit)]
+    """Web units first, then the decode worker, then Kiwi units one by one, OpenWebRX (hfgcs-8992) last."""
+    rank = {REVIEW: 0, PUBLIC: 1, DECODE: 2, ONESHOT: 2, None: 2, KIWI: 3, OPENWEBRX: 4}[role_of(unit)]
     return (rank, unit)
 
 
@@ -115,6 +128,35 @@ def dependencies(pyproject_text: str | None) -> tuple:
     )
 
 
+# Optional-dependency extra -> roles whose units use it. An extra not listed here counts as
+# used by every unit (a conservative default for a new extra nobody has classified yet).
+EXTRA_ROLES: dict[str, frozenset[str]] = {
+    "openwebrx": frozenset({OPENWEBRX}),
+    "asr": frozenset({DECODE}),
+    "decode": frozenset({DECODE}),
+    "dev": frozenset(),
+}
+
+
+def dependency_roles(old_text: str | None, new_text: str | None) -> frozenset[str]:
+    """Roles whose units must restart because pyproject.toml's dependencies changed.
+
+    Core ``dependencies`` or ``requires-python`` changes affect every unit; a change to an
+    optional extra affects only the roles in EXTRA_ROLES (so adding the decode extra never
+    restarts a recorder)."""
+    old, new = dependencies(old_text), dependencies(new_text)
+    if old == new:
+        return frozenset()
+    if len(old) != 3 or len(new) != 3 or old[0] != new[0] or old[2] != new[2]:
+        return ALL_ROLES
+    old_x, new_x = dict(old[1]), dict(new[1])
+    roles: set[str] = set()
+    for name in set(old_x) | set(new_x):
+        if old_x.get(name) != new_x.get(name):
+            roles |= EXTRA_ROLES.get(name, ALL_ROLES)
+    return frozenset(roles)
+
+
 @dataclass
 class UnitPlan:
     unit: str
@@ -122,6 +164,7 @@ class UnitPlan:
     reasons: list[str] = field(default_factory=list)
     forced: bool = False
     unit_file: str | None = None  # repo path of a changed unit file to install
+    install_only: bool = False  # install the unit file, never (re)start it (one-shot units)
 
     @property
     def recorder(self) -> bool:
@@ -135,12 +178,18 @@ def plan_units(
     deps_changed: bool = False,
     force: tuple[str, ...] = (),
     pending: dict[str, list[str]] | None = None,
+    dep_roles: frozenset[str] | None = None,
 ) -> tuple[list[UnitPlan], list[str]]:
     """Which of ``units`` must restart for ``changed`` paths, in restart order.
 
     Returns ``(plans, notes)``. ``force`` names units to restart whatever changed
     (``all`` = every unit); ``pending`` carries restarts deferred by an earlier run.
+    ``dep_roles`` (see dependency_roles) are the roles a dependency change affects;
+    ``deps_changed=True`` without it means every role. One-shot units
+    (hfgcs-decode-backfill) are never restarted: a changed unit file is only installed.
     """
+    if dep_roles is None:
+        dep_roles = ALL_ROLES if deps_changed else frozenset()
     known = {safe_name(u) for u in units}
     plans: dict[str, UnitPlan] = {}
     notes: list[str] = []
@@ -155,7 +204,9 @@ def plan_units(
         uf = unit_file_unit(path)
         if uf is not None:
             if uf in known:
-                add(uf, f"unit file {path}").unit_file = path
+                p = add(uf, f"unit file {path}")
+                p.unit_file = path
+                p.install_only = p.role == ONESHOT
             else:
                 notes.append(f"{path}: unit {uf} is not installed here; not installed or started")
             continue
@@ -163,22 +214,27 @@ def plan_units(
         for unit in known:
             if role_of(unit) in roles:
                 add(unit, path)
-    if deps_changed:
-        for unit in known:
-            if role_of(unit) is not None:
-                add(unit, "pyproject.toml dependencies")
+    for unit in known:
+        if role_of(unit) in dep_roles:
+            add(unit, "pyproject.toml dependencies")
     for unit, reasons in (pending or {}).items():
         unit = safe_name(unit)
+        if role_of(unit) == ONESHOT:
+            continue
         if unit in known:
             for r in reasons:
                 add(unit, f"pending from an earlier deploy: {r}")
         else:
             notes.append(f"pending restart of {unit} dropped: unit not found")
     for f in force:
-        targets = sorted(known) if f == "all" else [safe_name(f)]
+        targets = sorted(u for u in known if role_of(u) != ONESHOT) if f == "all" else [safe_name(f)]
         for unit in targets:
             if unit not in known:
                 notes.append(f"--force {f}: no such unit")
+                continue
+            if role_of(unit) == ONESHOT:
+                notes.append(f"--force {f}: one-shot unit, never started by a deploy "
+                             f"(systemctl --user start {unit} by hand)")
                 continue
             add(unit, "--force").forced = True
     return sorted(plans.values(), key=lambda p: order_key(p.unit)), notes
@@ -593,7 +649,7 @@ class Options:
     extra_windows: tuple[str, ...] = ()
     db: Path | None = None
     migrate: bool = True
-    pip_spec: str = ".[openwebrx]"
+    pip_spec: str = ".[openwebrx]"  # DEFAULT_PIP_SPEC
     python: str = sys.executable
     install_units: bool = True
     unit_dir: Path = Path(os.path.expanduser("~/.config/systemd/user"))
@@ -663,12 +719,18 @@ class Deployer:
 
         old_py, new_py = self.git.show(old, "pyproject.toml"), self.git.show(target, "pyproject.toml")
         reinstall = old_py != new_py
-        deps_changed = reinstall and dependencies(old_py) != dependencies(new_py)
+        dep_roles = dependency_roles(old_py, new_py) if reinstall else frozenset()
+        units = list(o.units) or self.sc.list_units()
         errors = 0
         if reinstall:
-            cmd = [o.python, "-m", "pip", "install", "--quiet", "-e", o.pip_spec]
-            self.say(f"  pyproject.toml changed: reinstall ({' '.join(cmd)})"
-                     + ("; dependencies changed, every unit restarts" if deps_changed else ""))
+            cmd = [o.python, "-m", "pip", "install", "--quiet", "-e", self.pip_spec(units)]
+            if dep_roles == ALL_ROLES:
+                why = "; dependencies changed, every unit restarts"
+            elif dep_roles:
+                why = f"; optional dependencies changed for: {', '.join(sorted(dep_roles))} units only"
+            else:
+                why = ""
+            self.say(f"  pyproject.toml changed: reinstall ({' '.join(cmd)}){why}")
             if not o.dry_run:
                 r = self._run(cmd, cwd=str(o.repo), capture_output=True, text=True)
                 if r.returncode != 0:
@@ -682,15 +744,16 @@ class Deployer:
             self._record(old, target, changed)
             return 1
 
-        units = list(o.units) or self.sc.list_units()
         pending = self.pending.load()
-        plans, notes = plan_units(changed, units, deps_changed=deps_changed, force=o.force, pending=pending)
+        plans, notes = plan_units(changed, units, dep_roles=dep_roles, force=o.force, pending=pending)
         for note in notes:
             self.say(f"  note: {note}")
         idle_units = sorted(set(map(safe_name, units)) - {p.unit for p in plans})
         self.say("  plan (one at a time, in this order):" if plans else "  plan: no unit needs a restart")
         for i, p in enumerate(plans, 1):
             how = (f"restart when idle >= {o.min_idle_s:.0f} s" if p.recorder else "restart")
+            if p.install_only:
+                how = "never started by a deploy"
             if p.unit_file:
                 how = f"install {p.unit_file}, daemon-reload, " + how
             extra = ""
@@ -704,7 +767,8 @@ class Deployer:
         if idle_units:
             self.say(f"  not restarted: {', '.join(idle_units)}")
         if o.dry_run:
-            self.outcomes = [Outcome(p.unit, "dry-run", "would restart") for p in plans]
+            self.outcomes = [Outcome(p.unit, "dry-run", "would install the unit file only" if p.install_only
+                                     else "would restart") for p in plans]
             self.summary()
             return 0
 
@@ -724,6 +788,14 @@ class Deployer:
         if errors:
             return 1
         return 3 if left else 0
+
+    def pip_spec(self, units: list[str]) -> str:
+        """``--pip-spec`` as given; the default also gets the ``decode`` extra once an
+        hfgcs-decode unit is installed, so a reinstall keeps the decoder's dependencies."""
+        spec = self.o.pip_spec
+        if spec == DEFAULT_PIP_SPEC and any(role_of(u) in (DECODE, ONESHOT) for u in units):
+            return ".[openwebrx,decode]"
+        return spec
 
     def _migrate(self, old: str, now: datetime) -> bool:
         o = self.o
@@ -776,6 +848,9 @@ class Deployer:
     def _restart(self, p: UnitPlan, windows: list[Window]) -> Outcome:
         o = self.o
         self.say(f"- {p.unit}")
+        if p.install_only:
+            self.say("  unit file installed; one-shot unit, not started (start it by hand when wanted)")
+            return Outcome(p.unit, "installed", "one-shot unit: unit file installed, not started")
         if p.recorder:
             blocked = wait_idle(p.unit, self.sc, self.clock, min_idle_s=o.min_idle_s,
                                 timeout_s=o.idle_timeout_s, windows=windows, forced=p.forced,
@@ -807,7 +882,7 @@ class Deployer:
         self.say("summary:")
         if not self.outcomes:
             self.say("  nothing restarted")
-        for result in ("restarted", "dry-run", "deferred", "skipped", "failed"):
+        for result in ("restarted", "installed", "dry-run", "deferred", "skipped", "failed"):
             for oc in self.outcomes:
                 if oc.result == result:
                     self.say(f"  {result:9s} {oc.unit}: {oc.detail}")
@@ -828,6 +903,7 @@ class Deployer:
 
 __all__ = [
     "Clock", "Deployer", "Options", "Outcome", "Status", "Systemctl", "UnitPlan", "Window",
-    "active_window", "load_windows", "order_key", "parse_window", "plan_units", "role_of",
+    "active_window", "dependency_roles", "load_windows", "order_key", "parse_window", "plan_units",
+    "role_of",
     "roles_for_path", "runtime_dir", "unit_status", "wait_idle", "wait_streaming",
 ]

@@ -105,7 +105,9 @@ def idle_everywhere(sc, state_dir):
     ("docs/deploy.md", set()),
     ("README.md", set()),
     ("tests/test_dsp.py", set()),
-    ("decoding/asr.py", set()),
+    ("decoding/asr.py", {"decode"}),
+    ("decoding/worker.py", {"decode"}),
+    ("deploy/bin/hfgcs-python", {"review", "public", "decode"}),
     ("scripts/hfgcs_db.py", set()),
     ("hfgcs/deploy.py", set()),
     ("hfgcs/sources/soapy.py", set()),
@@ -122,6 +124,8 @@ def test_role_of_units():
     assert d.role_of("hfgcs-review") == "review"
     assert d.role_of("hfgcs-public") == "public"
     assert d.role_of("hfgcs-datasette") is None
+    assert d.role_of("hfgcs-decode") == "decode"
+    assert d.role_of("hfgcs-decode-backfill") == "oneshot"
 
 
 def names(plans):
@@ -601,3 +605,95 @@ def test_deploy_sh_wrapper_runs_the_script():
     cmd = [str(ROOT / "deploy" / "deploy.sh"), "--help"]
     r = subprocess.run(cmd, env=env, capture_output=True, text=True)
     assert r.returncode == 0 and "--dry-run" in r.stdout and "--force UNIT" in r.stdout
+
+
+# -- decode service (hfgcs-decode, hfgcs-decode-backfill) -------------------------------------------
+DECODE_UNITS = [*UNITS, "hfgcs-decode", "hfgcs-decode-backfill"]
+
+
+def test_decoding_change_restarts_only_the_decode_worker():
+    plans, _ = d.plan_units(["decoding/worker.py", "decoding/asr.py", "docs/decoding.md"], DECODE_UNITS)
+    assert names(plans) == ["hfgcs-decode"]
+    assert not any(p.recorder for p in plans)
+
+
+def test_new_decode_unit_file_restarts_nothing_while_not_installed():
+    changed = ["deploy/systemd/hfgcs-decode.service", "deploy/systemd/hfgcs-decode-backfill.service",
+               "deploy/env/decode.env.example", "decoding/worker.py", "decoding/voice_gate.py"]
+    plans, notes = d.plan_units(changed, UNITS)   # hilltop today: no decode units installed
+    assert plans == []
+    assert any("hfgcs-decode is not installed" in n for n in notes)
+
+
+def test_backfill_unit_file_is_installed_but_never_started():
+    plans, _ = d.plan_units(["deploy/systemd/hfgcs-decode-backfill.service"], DECODE_UNITS)
+    assert names(plans) == ["hfgcs-decode-backfill"] and plans[0].install_only
+    plans, notes = d.plan_units([], DECODE_UNITS, force=("all", "hfgcs-decode-backfill"),
+                                pending={"hfgcs-decode-backfill": ["x"]})
+    assert "hfgcs-decode-backfill" not in names(plans) and "hfgcs-decode" in names(plans)
+    assert any("one-shot" in n for n in notes)
+
+
+def _py(extras='openwebrx = ["websockets>=12"]', deps='["numpy"]'):
+    return f'[project]\nname = "hfgcs"\ndependencies = {deps}\n[project.optional-dependencies]\n{extras}\n'
+
+
+def test_dependency_roles_by_extra():
+    base = _py()
+    assert d.dependency_roles(base, base) == frozenset()
+    with_decode = _py('openwebrx = ["websockets>=12"]\ndecode = ["faster-whisper"]')
+    assert d.dependency_roles(base, with_decode) == {"decode"}
+    assert d.dependency_roles(base, _py('openwebrx = ["websockets>=13"]')) == {"openwebrx"}
+    assert d.dependency_roles(base, _py('openwebrx = ["websockets>=12"]\ndev = ["pytest"]')) == frozenset()
+    assert d.dependency_roles(base, _py(deps='["numpy>=2"]')) == d.ALL_ROLES
+    assert d.dependency_roles(base, _py('openwebrx = ["websockets>=12"]\nnewthing = ["x"]')) == d.ALL_ROLES
+    plans, _ = d.plan_units(["pyproject.toml"], DECODE_UNITS, dep_roles=frozenset({"decode"}))
+    assert names(plans) == ["hfgcs-decode"]
+
+
+def test_adding_the_decode_extra_restarts_no_recorder(repo, tmp_path):
+    """The deploy of this very change on hilltop: new extra + new unit files + decoding/ code."""
+    clock = FakeClock()
+    sc = FakeSystemctl(clock, tmp_path)
+    idle_everywhere(sc, tmp_path)
+    advance(repo, {"pyproject.toml": '[project]\nname = "hfgcs"\ndependencies = ["numpy"]\n'
+                   '[project.optional-dependencies]\ndecode = ["faster-whisper>=1.1"]\n',
+                   "decoding/worker.py": "# v2\n", "deploy/systemd/hfgcs-decode.service": "# v1\n"})
+    ran = []
+
+    class R:
+        returncode, stdout, stderr = 0, "", ""
+
+    out = Out()
+    opts = d.Options(repo=repo, ref="target", fetch=False, windows_file=None, db=tmp_path / "none.db",
+                     state_home=tmp_path / "sh", state_dir=tmp_path, poll_s=1.0, python="/venv/python",
+                     unit_dir=tmp_path / "units")
+    rc = d.Deployer(opts, systemctl=sc, clock=clock, out=out,
+                    run=lambda cmd, **kw: ran.append(cmd) or R()).run()
+    assert rc == 0, out.text
+    assert ran == [["/venv/python", "-m", "pip", "install", "--quiet", "-e", ".[openwebrx]"]]
+    assert [k for k, *_ in sc.log] == []           # no restart, no daemon-reload
+    assert "hfgcs-decode is not installed" in out.text
+
+
+def test_decode_unit_installed_gets_decode_extra_and_only_it_restarts(repo, tmp_path):
+    clock = FakeClock()
+    sc = FakeSystemctl(clock, tmp_path, units=DECODE_UNITS)
+    idle_everywhere(sc, tmp_path)
+    advance(repo, {"pyproject.toml": '[project]\nname = "hfgcs"\ndependencies = ["numpy"]\n'
+                   '[project.optional-dependencies]\ndecode = ["faster-whisper>=1.2"]\n',
+                   "decoding/pipeline.py": "# v2\n"})
+    ran = []
+
+    class R:
+        returncode, stdout, stderr = 0, "", ""
+
+    out = Out()
+    opts = d.Options(repo=repo, ref="target", fetch=False, windows_file=None, db=tmp_path / "none.db",
+                     state_home=tmp_path / "sh", state_dir=tmp_path, poll_s=1.0, python="/venv/python",
+                     extra_windows=("2026-10-26T19:00Z/2026-10-27T07:00Z",))   # inside a quiet window
+    rc = d.Deployer(opts, systemctl=sc, clock=clock, out=out,
+                    run=lambda cmd, **kw: ran.append(cmd) or R()).run()
+    assert rc == 0, out.text
+    assert ran == [["/venv/python", "-m", "pip", "install", "--quiet", "-e", ".[openwebrx,decode]"]]
+    assert [(k, u) for k, u, _ in sc.log] == [("restart", "hfgcs-decode")]
