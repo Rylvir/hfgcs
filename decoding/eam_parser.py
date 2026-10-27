@@ -419,6 +419,21 @@ def parse_eam(transcript: TokenInput) -> dict:
 
 
 # ---------------------------------------------------------------- Skyking
+def _has_eam_message_words(n: Sequence[str]) -> bool:
+    """EAM-only procedure: "message follows" or "message (of) N characters".
+    A Skyking never says "message", so a segment that does is an EAM even when
+    ASR wrote "Skyking" at its start (eam-8c26a8bf: a mid-message start heard as
+    "Skyking, Mike. Sierra ...", closing "This concludes message of 32 characters")."""
+    for i, t in enumerate(n):
+        if t != "message":
+            continue
+        if i + 1 < len(n) and n[i + 1] in ("follows", "followed"):
+            return True
+        if any(x in ("characters", "character") for x in n[i + 1 : i + 6]):
+            return True
+    return False
+
+
 def _skyking_read(toks: list[Token], n: list[str], start: int, end: int) -> dict:
     i = start
     while i < end and n[i] == "skyking":
@@ -680,12 +695,15 @@ def parse_transcript(transcript: TokenInput) -> list[dict]:
     out = []
     for s, e in zip(starts, starts[1:] + [len(toks)], strict=True):
         seg, segn = toks[s:e], n[s:e]
-        if "skyking" in segn[:3]:
+        eam_trailer = _has_eam_message_words(segn)
+        if "skyking" in segn[:3] and not eam_trailer:
             rec = parse_skyking(seg)
         elif _is_radio_check(segn) and _find(segn, ["message"]) < 0:
             rec = _parse_radio_check(seg, segn)
         else:
             rec = parse_eam(seg)
+            if "skyking" in segn[:3]:
+                rec["flags"].append("skyking_word_in_eam")  # ASR heard "Skyking" in an EAM
             if s == 0 and n[:2] != ["all", "stations"]:
                 rec["flags"].append("partial_start")
                 kind = mid_message_start_kind(rec)

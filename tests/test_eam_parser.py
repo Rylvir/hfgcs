@@ -471,3 +471,22 @@ def test_eam_callsigns_stop_at_procedure_words():
     assert r["opening_callsign"] == "MAINSAIL" and r["callsign"] == "MAINSAIL"
     r = parse_eam(eam(addressee="Red Dog").replace("For Red Dog", "For Red Dog over", 1))
     assert r["addressee"] == "RED DOG"
+
+
+def test_skyking_word_in_mid_message_eam_start():
+    """eam-8c26a8bf: a clip that starts mid-EAM, heard by ASR as "Skyking, Mike.
+    Sierra ...", closing with "This concludes message of 32 characters". A Skyking
+    never says "message", so this is a (partial) EAM, not a Skyking."""
+    text = (
+        "Skyking, Mike. Sierra. Yankee Zulu, Mike. Delta Delta Sierra. I say again. Delta Whiskey "
+        "Delta Quebec Uniform Yankee Juliet Charlie Mike Sierra. This concludes message of 32 characters. "
+        "This is Plan Shot out."
+    )
+    (rec,) = parse_transcript(tokenize(text))
+    assert rec["type"] == "eam"
+    assert "skyking_word_in_eam" in rec["flags"] and "partial_start" in rec["flags"]
+
+
+def test_real_skyking_still_skyking():
+    text = "Skyking, Skyking, do not answer. Redwood. Time four five. Authentication Alpha Bravo. I say again"
+    assert parse_transcript(tokenize(text))[0]["type"] == "skyking"
