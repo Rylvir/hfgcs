@@ -37,7 +37,8 @@ INSERT OR IGNORE INTO settings(key, value, description) VALUES
  ('link.min_known',     '0.5',  'min fraction of positions known in both copies (builtin only; decoding fixes 0.5 in code)'),
  ('link.similarity',    'auto', 'auto = decoding.similarity.text_similarity if importable, else builtin; or builtin / decoding'),
  ('link.max_len_diff',  '2',    'max length difference compared (decoding similarity only; builtin compares equal lengths)'),
- ('link.partial_min_len', '12', 'shortest truncated copy (chars known in both) linked to a longer copy as partial; 0 = off');
+ ('link.partial_min_len', '12', 'shortest truncated copy (chars known in both) linked to a longer copy as partial; 0 = off'),
+ ('link.time_window_sec', '30', 'copies of one type starting this many seconds apart are one transmission, whatever their text; 0 = off');
 
 -- ---------------------------------------------------------------------------
 -- Message type taxonomy (lookup table, enforced by FK from messages.msg_type).
