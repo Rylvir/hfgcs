@@ -192,6 +192,41 @@ class DbTest(unittest.TestCase):
         self.assertIsNone(ps(full[:11], full))                   # shorter than min_len
         self.assertIsNone(ps("ZZTEST........", full))            # too few known characters
         self.assertLess(ps("QQQQQQQQQQQQQQ", full), 0.1)
+        # stop_below only drops offsets that cannot reach it; the score of one that can is unchanged
+        self.assertIsNone(ps("QQQQQQQQQQQQQQ", full, stop_below=0.9))
+        self.assertAlmostEqual(ps("ZZTESTABCDEFGHIZ", full, stop_below=0.9), 15 / 16)
+        self.assertIsNone(ps("ZZTESTABCDEFGHZZ", full, stop_below=0.9))   # 14/16 = 0.875
+        # the str.find shortcut and the early exit give the same answer as checking every offset
+        import random
+
+        def reference(a, b, stop_below=None, min_len=12, min_known=0.5):
+            short, full_ = sorted((a, b), key=len)
+            n = len(short)
+            if n == len(full_) or n < min_len:
+                return None
+            max_miss = n if stop_below is None else (1.0 - stop_below) * n
+            scores = []
+            for off in range(len(full_) - n + 1):
+                pairs = [(x, y) for x, y in zip(short, full_[off:off + n], strict=True)
+                         if x not in ".?" and y not in ".?"]
+                miss = sum(x != y for x, y in pairs)
+                if len(pairs) >= max(min_len, min_known * n) and miss <= max_miss:
+                    scores.append(1 - miss / len(pairs))
+            return max(scores, default=None)
+
+        rnd = random.Random(3)
+        for _ in range(2000):
+            alpha = rnd.choice(["ABC", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", "AB.", "ABCD?"])
+            long_ = "".join(rnd.choice(alpha) for _ in range(rnd.randint(12, 45)))
+            off = rnd.randint(0, 10)
+            frag = list(long_[off:off + rnd.randint(10, 35)])
+            for _ in range(rnd.randint(0, 5)):
+                if frag:
+                    frag[rnd.randrange(len(frag))] = rnd.choice(alpha)
+            frag = "".join(frag)
+            for stop in (None, 0.9, 0.5):
+                self.assertEqual(ps(frag, long_, stop_below=stop), reference(frag, long_, stop),
+                                 (frag, long_, stop))
 
     def test_link_partial_copies(self):
         self.load_fake_pipeline()

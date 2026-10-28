@@ -340,26 +340,52 @@ def builtin_similarity(a: str, b: str, min_known: float = 0.5) -> float | None:
 similarity = builtin_similarity   # backwards-compatible name
 
 
-def partial_similarity(a: str, b: str, min_len: int = 12, min_known: float = 0.5) -> float | None:
+def partial_similarity(a: str, b: str, min_len: int = 12, min_known: float = 0.5,
+                       stop_below: float | None = None) -> float | None:
     """Score a truncated copy against a longer one: the best wildcard-Hamming score of the
     shorter string at any offset inside the longer one. None = not comparable (equal
     lengths, a fragment shorter than ``min_len``, or no offset with at least
-    ``max(min_len, min_known * len(fragment))`` positions known in both)."""
+    ``max(min_len, min_known * len(fragment))`` positions known in both).
+
+    With ``stop_below``, an offset is abandoned as soon as its mismatches rule out a score
+    of ``stop_below`` (so only scores that can reach it are returned). ``link`` passes its
+    threshold: unrelated machine copies then cost a few comparisons per offset, not all."""
     short, full = sorted((a, b), key=len)
     n = len(short)
     if n == len(full) or n < max(1, min_len):
         return None
     need = max(min_len, min_known * n)
+    max_miss = n if stop_below is None else (1.0 - stop_below) * n
+    offsets = range(len(full) - n + 1)
+    blocks = int(max_miss) + 1
+    if blocks <= n and not any(w in short or w in full for w in WILDCARDS):
+        # Without wildcards every position is compared, so an offset with at most
+        # int(max_miss) mismatches has one of `blocks` disjoint pieces of `short` matching
+        # exactly there (pigeonhole). str.find locates those offsets and skips the rest.
+        size, cand = n // blocks, set()
+        for k in range(blocks):
+            lo = k * size
+            piece = short[lo:n if k == blocks - 1 else lo + size]
+            at = full.find(piece)
+            while at != -1:
+                if 0 <= at - lo <= len(full) - n:
+                    cand.add(at - lo)
+                at = full.find(piece, at + 1)
+        offsets = sorted(cand)
     best = None
-    for off in range(len(full) - n + 1):
-        compared = matches = 0
+    for off in offsets:
+        compared = misses = 0
         for x, y in zip(short, full[off:off + n], strict=True):
             if x in WILDCARDS or y in WILDCARDS:
                 continue
             compared += 1
-            matches += x == y
-        if compared >= need and (best is None or matches / compared > best):
-            best = matches / compared
+            if x != y:
+                misses += 1
+                if misses > max_miss:
+                    break
+        else:
+            if compared >= need and (best is None or 1 - misses / compared > best):
+                best = 1 - misses / compared
     return best
 
 
@@ -481,7 +507,7 @@ def cmd_link(args) -> int:
             # check here, since a fragment's "prefix" is just its first two characters.
             if partial_min_len and lb != la:
                 s = partial_similarity(b["text_norm"], a["text_norm"], partial_min_len,
-                                       cfg["link.min_known"])
+                                       cfg["link.min_known"], stop_below=threshold)
                 if s is not None and s >= threshold:
                     links.append((*sorted((b["id"], a["id"])), "partial", round(d, 1), round(s, 4),
                                   PARTIAL_METHOD))
