@@ -76,3 +76,19 @@ def test_load_toml_channel_groups(tmp_path):
     assert len(cfg.channels) == 16
     with pytest.raises(KeyError):
         channels_for("bogus")
+
+
+def test_squelch_window_defaults_and_validation():
+    cfg = Config()
+    assert cfg.noise_floor_window_seconds == 30.0
+    assert cfg.quiet_median_seconds == 15.0
+    Config(noise_floor_window_seconds=0, quiet_median_seconds=0)
+    Config(noise_floor_window_seconds=4, quiet_median_seconds=4, hang_seconds=4)
+    with pytest.raises(ValueError):
+        Config(noise_floor_window_seconds=-1)
+    with pytest.raises(ValueError):
+        Config(noise_floor_window_seconds=2, hang_seconds=4)
+    with pytest.raises(ValueError):
+        Config(quiet_median_seconds=-0.1)
+    with pytest.raises(ValueError):
+        Config(quiet_median_seconds=2, hang_seconds=4)

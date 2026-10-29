@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from conftest import AUDIO_RATE, IQ_RATE, chunks, tone
 
-from hfgcs.dsp import Agc, UsbDemodulator
+from hfgcs.dsp import Agc, Squelch, UsbDemodulator
 
 SETTLE = 1000  # audio samples to skip while the filter fills
 
@@ -86,3 +86,99 @@ def test_agc_chunked_equals_one_shot_and_levels():
     # Settles to target peak on both levels (no per-chunk normalisation).
     for seg in (one[AUDIO_RATE // 2 : AUDIO_RATE], one[2 * AUDIO_RATE :]):
         assert 0.2 < np.max(np.abs(seg)) < 0.45
+
+
+def _feed(sq, level, seconds, block=0.25):
+    events = []
+    left = seconds
+    while left > 1e-9:
+        dt = min(block, left)
+        events.append(sq.update(level, dt))
+        left -= dt
+    return events
+
+
+def test_squelch_stale_floor_raise_only_after_a_full_window_open():
+    sq = Squelch(min_activity_s=0.4, hang_s=2.0, floor_window_s=10.0, quiet_median_s=None)
+    _feed(sq, -60.0, 1.0)
+    assert sq.noise_floor_db == pytest.approx(-60.0)
+    _feed(sq, -48.0, 9.5)  # +12 dB, open, but the window is not full yet
+    assert sq.is_open and sq.floor_raises == 0 and sq.noise_floor_db == pytest.approx(-60.0)
+    events = _feed(sq, -48.0, 8.0)
+    assert sq.floor_raises == 1
+    assert sq.noise_floor_db == pytest.approx(-48.0)
+    assert "close" in events
+
+
+def test_squelch_floor_window_disabled_by_default():
+    sq = Squelch()
+    _feed(sq, -60.0, 1.0)
+    _feed(sq, -48.0, 20.0)  # flat +12 dB, long enough to open and stay open
+    assert sq.is_open
+    assert sq.floor_raises == 0
+    assert sq.noise_floor_db == pytest.approx(-60.0)
+
+
+def test_squelch_quiet_median_closes_when_clicks_keep_resetting_hang():
+    """0.5 s spikes every 1.5 s never finish a 2 s hang, but the median is the quiet bed."""
+    sq = Squelch(min_activity_s=0.4, hang_s=2.0, floor_window_s=None, quiet_median_s=5.0)
+    _feed(sq, -60.0, 1.0)
+    closed_at = None
+    t = 0.0
+    while t < 12.0 and closed_at is None:
+        phase = t % 1.5
+        level = -48.0 if phase < 0.5 else -57.0  # snr +12, then +3
+        if sq.update(level, 0.1) == "close":
+            closed_at = t
+        t += 0.1
+    assert closed_at is not None and 4.0 < closed_at < 9.0
+    assert sq.floor_raises == 0
+
+
+def test_squelch_keyed_speech_does_not_median_close():
+    """0.8 s on / 0.4 s off: the median is the signal, and the gaps are shorter than hang."""
+    sq = Squelch(min_activity_s=0.4, hang_s=2.0, floor_window_s=30.0, quiet_median_s=5.0)
+    _feed(sq, -60.0, 1.0)
+    t = 0.0
+    while t < 20.0:
+        level = -48.0 if (t % 1.2) < 0.8 else -57.0
+        assert sq.update(level, 0.1) != "close"
+        t += 0.1
+    assert sq.is_open and sq.floor_raises == 0
+    assert sq.median_snr is not None and sq.median_snr >= sq.close_snr_db
+
+
+def test_disarm_holds_the_stuck_level_until_a_louder_signal():
+    sq = Squelch(min_activity_s=0.4, hang_s=2.0, floor_window_s=None, quiet_median_s=None)
+    _feed(sq, -60.0, 1.0)
+    _feed(sq, -48.0, 1.0)
+    assert sq.is_open
+    sq.disarm()
+    assert not sq.is_open and sq._rearm and sq.floor_raises == 1
+    assert sq.noise_floor_db == pytest.approx(-53.0)  # stuck level minus close_snr_db
+    _feed(sq, -48.0, 3.0)
+    assert not sq.is_open and sq._rearm
+    events = _feed(sq, -40.0, 1.0)  # >= stuck level + open_snr_db
+    assert "open" in events and not sq._rearm
+
+
+def test_dip_below_close_clears_disarm_so_a_real_rise_records():
+    sq = Squelch(min_activity_s=0.4, hang_s=2.0, floor_window_s=None, quiet_median_s=None)
+    _feed(sq, -60.0, 1.0)
+    _feed(sq, -48.0, 1.0)
+    sq.disarm()
+    # Just under the close threshold relative to the raised floor. Clears the hold.
+    assert sq.update(-58.2, 0.2) is None
+    assert not sq._rearm
+    events = _feed(sq, -44.0, 1.0)  # snr >= open against the raised floor
+    assert "open" in events
+
+
+def test_release_drops_a_disarm_hold():
+    sq = Squelch()
+    _feed(sq, -60.0, 0.5)
+    _feed(sq, -48.0, 1.0)
+    sq.disarm()
+    assert sq._rearm
+    sq.release()
+    assert not sq._rearm and not sq.is_open

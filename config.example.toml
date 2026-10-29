@@ -5,6 +5,14 @@ hang_seconds = 4.0
 preroll_seconds = 1.5
 open_snr_db = 8.0
 close_snr_db = 5.0
+# Close when the median SNR over this window is below close_snr_db, so a click
+# that resets hang_seconds cannot hold a quiet channel open. 0 disables.
+# Must be 0 or at least hang_seconds.
+quiet_median_seconds = 15.0
+# After the squelch has been open this long, raise a stale noise floor up to the
+# quietest block in the window. Voice has pauses; a noise bed does not. 0 disables.
+# Must be 0 or at least hang_seconds.
+noise_floor_window_seconds = 30.0
 # channels = [4724, 6739, 8992, 11175, 13200, 15016]
 # Or pick named groups from hfgcs.config.FREQUENCY_GROUPS:
 # channel_groups = ["voice"]            # default

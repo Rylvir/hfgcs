@@ -8,6 +8,7 @@ the same output as one long call. Nothing here touches hardware.
 from __future__ import annotations
 
 import math
+from collections import deque
 
 import numpy as np
 from scipy import signal
@@ -127,13 +128,31 @@ class Agc:
 
 
 class Squelch:
-    """Voice-slot squelch with hysteresis, hang time and a frozen noise floor.
+    """Voice-slot squelch with hysteresis, hang time and a mostly frozen noise floor.
 
     Time is counted from the length of the blocks fed in, not the wall clock,
     so the behaviour is deterministic and testable.
     States: ``closed`` -> ``pending`` (above threshold, not yet long enough)
-    -> ``open`` -> back to ``closed`` after ``hang_s`` below the close level.
-    The noise floor only adapts while ``closed``.
+    -> ``open`` -> back to ``closed`` after ``hang_s`` below the close level,
+    or sooner when the median SNR over ``quiet_median_s`` is below the close
+    level (a click resets the hang; it does not keep a quiet channel open).
+    The noise floor follows the band (EMA) only while ``closed``.
+
+    Stale-floor recovery (``floor_window_s``): voice has pauses, so over any
+    ``floor_window_s`` of real traffic the quietest block sits near the noise.
+    If the squelch has been open that long and even its quietest block in the
+    window is more than ``close_snr_db`` above the floor, the floor is stale
+    (learned too low, e.g. from a KiwiSDR stream's first blocks while its
+    server-side AGC settles): it is raised to that minimum, so the squelch
+    then closes after ``hang_s`` instead of recording noise until
+    ``max_record_seconds``. The floor is only ever raised this way, never
+    lowered. ``None`` or 0 disables it.
+
+    ``disarm`` is the length-cap path for a channel that is open but not a
+    real signal: raise the floor the same way and hold closed until the level
+    falls below the close threshold, or rises ``open_snr_db`` above the level
+    that was capped. A real signal still running at the cap is left armed so
+    the next file can continue it.
     """
 
     def __init__(
@@ -143,13 +162,27 @@ class Squelch:
         min_activity_s: float = 0.8,
         hang_s: float = 4.0,
         alpha: float = 0.05,
+        floor_window_s: float | None = None,
+        quiet_median_s: float | None = None,
     ):
         self.open_snr_db = open_snr_db
         self.close_snr_db = close_snr_db
         self.min_activity_s = min_activity_s
         self.hang_s = hang_s
         self.alpha = alpha
+        self.floor_window_s = floor_window_s or None
+        self.quiet_median_s = quiet_median_s or None
         self.noise_floor_db: float | None = None
+        self.floor_raises = 0  # times the floor was raised while open or at the cap
+        self._t = 0.0  # stream time (sum of block lengths)
+        self._open_since: float | None = None
+        self._mins: deque[tuple[float, float]] = deque()  # (block end time, level), increasing levels
+        self._snr_win: deque[tuple[float, float]] = deque()  # (time, snr) while open
+        self.median_snr: float | None = None
+        self.last_level_db: float | None = None
+        self.last_snr: float | None = None
+        self._rearm = False
+        self._rearm_level: float | None = None
         self.state = "closed"
         self.pending_s = 0.0
         self.below_s = 0.0
@@ -159,20 +192,46 @@ class Squelch:
     def is_open(self) -> bool:
         return self.state == "open"
 
+    @property
+    def stream_s(self) -> float:
+        return self._t
+
     def update(self, level_db: float, block_s: float) -> str | None:
         """Feed one block level. Returns "open", "close" or None."""
         if math.isnan(level_db):
             return None
+        self._t += block_s
         if self.noise_floor_db is None:
             self.noise_floor_db = level_db
+        self.last_level_db = level_db
+        if self.floor_window_s:
+            self._track_min(level_db)
         snr = level_db - self.noise_floor_db
+        self.last_snr = snr
+
+        if self._rearm:
+            louder = (
+                self._rearm_level is not None
+                and level_db >= self._rearm_level + self.open_snr_db
+            )
+            if snr < self.close_snr_db or louder:
+                self._rearm = False
+                self._rearm_level = None
+            else:
+                return None
 
         if self.state == "open":
+            if self._stale_floor():
+                self.noise_floor_db = self._mins[0][1]
+                self.floor_raises += 1
+                snr = level_db - self.noise_floor_db
+                self.last_snr = snr
             self.snr_history.append(snr)
+            self._track_median(snr)
             self.below_s = 0.0 if snr >= self.close_snr_db else self.below_s + block_s
-            if self.below_s >= self.hang_s:
-                self.state = "closed"
-                self.below_s = 0.0
+            quiet_median = self.median_snr is not None and self.median_snr < self.close_snr_db
+            if self.below_s >= self.hang_s or quiet_median:
+                self._to_closed()
                 return "close"
             return None
 
@@ -184,21 +243,87 @@ class Squelch:
                 self.state = "open"
                 self.pending_s = 0.0
                 self.below_s = 0.0
+                self._open_since = self._t - self.min_activity_s
+                self._snr_win.clear()
+                self.median_snr = None
+                self._track_median(snr)
                 return "open"
             return None
 
         # Below threshold while closed or pending: drop the pending burst and
         # let the noise floor follow the band.
-        self.state = "closed"
+        self._to_closed()
         self.pending_s = 0.0
         self.snr_history.clear()
         self.noise_floor_db += self.alpha * (level_db - self.noise_floor_db)
+        self.last_snr = level_db - self.noise_floor_db
         return None
 
     def force_close(self) -> None:
-        self.state = "closed"
+        """Close without raising the floor or holding the channel shut."""
+        self._to_closed()
         self.pending_s = 0.0
+
+    def release(self) -> None:
+        """New stream segment (a retune). Keeps the floor, drops any hold."""
+        self.force_close()
+        self._rearm = False
+        self._rearm_level = None
+
+    def disarm(self) -> None:
+        """Length cap on a stuck channel: raise the floor and do not reopen on it."""
+        if self.noise_floor_db is not None:
+            raised = None
+            if self._mins and self._mins[0][1] > self.noise_floor_db:
+                raised = self._mins[0][1]
+            elif self.last_level_db is not None:
+                candidate = self.last_level_db - self.close_snr_db
+                if candidate > self.noise_floor_db:
+                    raised = candidate
+            if raised is not None:
+                self.noise_floor_db = raised
+                self.floor_raises += 1
+        self._rearm_level = self.last_level_db
+        self.force_close()
+        self._rearm = True
+
+    def _to_closed(self) -> None:
+        self.state = "closed"
         self.below_s = 0.0
+        self._open_since = None
+        self._snr_win.clear()
+        self.median_snr = None
+
+    def _track_min(self, level_db: float) -> None:
+        """Sliding-window minimum of the block levels (monotonic deque)."""
+        q = self._mins
+        while q and q[-1][1] >= level_db:
+            q.pop()
+        q.append((self._t, level_db))
+        cutoff = self._t - self.floor_window_s
+        while q and q[0][0] <= cutoff:
+            q.popleft()
+
+    def _track_median(self, snr: float) -> None:
+        if not self.quiet_median_s or self._open_since is None:
+            self.median_snr = None
+            return
+        q = self._snr_win
+        q.append((self._t, snr))
+        cutoff = self._t - self.quiet_median_s
+        while q and q[0][0] <= cutoff:
+            q.popleft()
+        if self._t - self._open_since < self.quiet_median_s - 1e-9 or len(q) < 2:
+            self.median_snr = None
+            return
+        self.median_snr = float(np.median([s for _, s in q]))
+
+    def _stale_floor(self) -> bool:
+        if not self.floor_window_s or self._open_since is None or not self._mins:
+            return False
+        if self._t - self._open_since < self.floor_window_s:
+            return False  # the window must hold only audio from this open period
+        return self._mins[0][1] - self.noise_floor_db > self.close_snr_db
 
 
 class Resampler:

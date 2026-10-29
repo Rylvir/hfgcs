@@ -25,7 +25,7 @@
   "$defs": {
     "recording": {
       "type": "object",
-      "description": "path and sha256 of the file decoded, then every Phase 0 catalog field (schema 2) copied verbatim when decoded from a catalog: start_utc, file_start_utc, end_utc, frequency_khz, mode, receiver_id, file, audio_rate, duration_sec, preroll_sec, snr_db_peak, snr_db_mean, noise_floor_db, truncated, notes. catalog_sha256 appears only if the catalog's sha256 disagrees with the file.",
+      "description": "path and sha256 of the file decoded, then every Phase 0 catalog field (schema 2) copied verbatim when decoded from a catalog: start_utc, file_start_utc, end_utc, frequency_khz, mode, receiver_id, file, audio_rate, duration_sec, preroll_sec, snr_db_peak, snr_db_mean, noise_floor_db, truncated, continued_from, notes. catalog_sha256 appears only if the catalog's sha256 disagrees with the file.",
       "required": ["path", "sha256"],
       "properties": {
         "path": {"type": "string"},
@@ -45,7 +45,11 @@
         "snr_db_peak": {"type": ["number", "null"]},
         "snr_db_mean": {"type": ["number", "null"]},
         "noise_floor_db": {"type": ["number", "null"]},
-        "truncated": {"type": "boolean"}
+        "truncated": {"type": "boolean"},
+        "continued_from": {
+          "type": ["string", "null"],
+          "description": "activity start_utc of the previous file when a length cap split one transmission; null otherwise"
+        }
       }
     },
     "asr": {

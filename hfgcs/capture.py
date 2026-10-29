@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -18,6 +19,10 @@ import numpy as np
 
 from .config import Config
 from .dsp import Agc, AudioFrontEnd, Squelch, UsbDemodulator, power_db
+
+log = logging.getLogger("hfgcs.squelch")
+# One line a few times a minute, plus a line on each open, close and floor raise.
+SQUELCH_LOG_EVERY_S = 20.0
 
 
 @dataclass
@@ -34,6 +39,7 @@ class Recording:
     snr_db_mean: float
     noise_floor_db: float
     truncated: bool = False
+    continued_from: datetime | None = None  # previous file's activity start, when a cap split one signal
 
     @property
     def duration_sec(self) -> float:
@@ -94,8 +100,14 @@ class ChannelCapture:
             cfg.min_activity_seconds,
             cfg.hang_seconds,
             cfg.noise_floor_alpha,
+            cfg.noise_floor_window_seconds,
+            cfg.quiet_median_seconds,
         )
         self.ring_len = int(round((cfg.preroll_seconds + cfg.min_activity_seconds) * self.rate))
+        self._link_from: datetime | None = None
+        self._link_until = 0
+        self._trace_t = 0.0
+        self._traced_raises = 0
         self.retune(start_utc)
 
     # -- stream control -------------------------------------------------
@@ -103,8 +115,10 @@ class ChannelCapture:
         """Start a fresh stream segment (after tuning). Keeps the noise floor."""
         self.demod.reset()
         self.agc.reset()
-        self.squelch.force_close()
+        self.squelch.release()
         self.squelch.snr_history.clear()
+        self._link_from = None
+        self._trace_t = self.squelch.stream_s
         self.t0 = start_utc or datetime.now(timezone.utc)
         self.samples = 0  # audio samples produced in this segment
         self.ring = np.zeros(0, np.float32)
@@ -143,12 +157,17 @@ class ChannelCapture:
                 activity_samples = int(round(self.cfg.min_activity_seconds * self.rate))
                 activity_start = max(self.samples - activity_samples, self.samples - len(self.ring))
                 file_start = self.samples - len(self.ring)
+                continued = None
+                if self._link_from is not None and self.samples <= self._link_until:
+                    continued = self._link_from
+                self._link_from = None
                 self._rec = [self.ring.copy()]
                 self._rec_meta = {
                     "start": activity_start,
                     "file_start": file_start,
                     "preroll": (activity_start - file_start) / self.rate,
                     "noise": self.squelch.noise_floor_db,
+                    "continued_from": continued,
                 }
                 self.ring = np.zeros(0, np.float32)
         else:
@@ -157,9 +176,29 @@ class ChannelCapture:
             if event == "close":
                 done.append(self._finish())
             elif recorded >= self.cfg.max_record_seconds:
-                done.append(self._finish(truncated=True))
-                self.squelch.force_close()
+                done.append(self._cap())
+                event = "cap"
+        self._trace(event)
         return done
+
+    def _cap(self) -> Recording:
+        """The length cap. A still-strong signal continues in the next file.
+
+        Anything else is a stuck squelch: raise the floor and do not reopen
+        on the same energy.
+        """
+        median = self.squelch.median_snr
+        real = median is not None and median >= self.cfg.open_snr_db
+        rec = self._finish(truncated=True)
+        if real:
+            self._link_from = rec.start_utc
+            grace = self.cfg.min_activity_seconds + 2.0
+            self._link_until = self.samples + int(round(grace * self.rate))
+            self.squelch.force_close()
+        else:
+            self._link_from = None
+            self.squelch.disarm()
+        return rec
 
     def flush(self) -> list[Recording]:
         """Close any open recording (e.g. before retuning or on shutdown)."""
@@ -168,6 +207,32 @@ class ChannelCapture:
         rec = self._finish(truncated=True)
         self.squelch.force_close()
         return [rec]
+
+    def _trace(self, event: str | None) -> None:
+        """Log opens, closes, floor raises, and a line every ``SQUELCH_LOG_EVERY_S``."""
+        sq = self.squelch
+        reasons = []
+        if event in ("open", "close", "cap"):
+            reasons.append(event)
+        if sq.floor_raises != self._traced_raises:
+            reasons.append("floor")
+            self._traced_raises = sq.floor_raises
+        if sq.stream_s - self._trace_t >= SQUELCH_LOG_EVERY_S:
+            reasons.append("tick")
+            self._trace_t = sq.stream_s
+        if not reasons:
+            return
+        log.info(
+            "squelch %s %g kHz state=%s level=%s floor=%s snr=%s median=%s raises=%d",
+            "+".join(reasons),
+            self.frequency_khz,
+            sq.state,
+            _db(sq.last_level_db),
+            _db(sq.noise_floor_db),
+            _db(sq.last_snr),
+            _db(sq.median_snr),
+            sq.floor_raises,
+        )
 
     def _finish(self, truncated: bool = False) -> Recording:
         meta = self._rec_meta
@@ -186,11 +251,18 @@ class ChannelCapture:
             snr_db_mean=float(np.mean(snrs)),
             noise_floor_db=float(meta["noise"]),
             truncated=truncated,
+            continued_from=meta.get("continued_from"),
         )
         self._rec = None
         self._rec_meta = {}
         self.squelch.snr_history.clear()
         return rec
+
+
+def _db(value: float | None) -> str:
+    if value is None:
+        return "none"
+    return f"{value:.1f}"
 
 
 def _iso(dt: datetime) -> str:
@@ -224,6 +296,7 @@ def save_recording(rec: Recording, record_dir: Path, catalog_file: Path) -> dict
         "snr_db_mean": round(rec.snr_db_mean, 1),
         "noise_floor_db": round(rec.noise_floor_db, 1),
         "truncated": rec.truncated,
+        "continued_from": _iso(rec.continued_from) if rec.continued_from else None,
         "notes": "USB voice candidate - review for EAM",
     }
     with open(catalog_file, "a") as fh:

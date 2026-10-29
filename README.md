@@ -90,10 +90,16 @@ Each recording is a 16-bit WAV in `recordings/` plus one JSON line in
   Tones keep their frequency and the opposite sideband is rejected by > 80 dB.
 - Mixer phase, filter memory and decimator phase persist across blocks; one
   attack/decay AGC replaces per-block normalisation.
-- The squelch measures the 3 kHz voice slot, opens after `min_activity_seconds`,
-  stays open until the signal has been below the close level for
-  `hang_seconds`, and freezes its noise floor while open. The audio from the
-  activity window and `preroll_seconds` before it are kept.
+- The squelch measures the 3 kHz voice slot and opens after `min_activity_seconds`.
+  It stays open until the signal has been below the close level for `hang_seconds`.
+  A click resets that hang; `quiet_median_seconds` still closes the squelch when
+  the median SNR over the window is below the close level. The noise floor follows
+  the band only while closed. After `noise_floor_window_seconds` open, if even the
+  quietest block is well above the floor, the floor is raised: voice pauses sit
+  near the noise, and a noise bed does not. Hitting `max_record_seconds` during a
+  real signal continues in the next file (`continued_from`). The same cap on a
+  stuck channel raises the floor and does not immediately re-open. Audio from the
+  activity window and `preroll_seconds` before it is kept.
 - Tuner AGC is off by default (`tuner_agc`) so dB thresholds are stable.
 
 ## Next improvements (easy to add)

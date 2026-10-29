@@ -219,10 +219,17 @@ class Config:
     min_activity_seconds: float = 0.8
     max_record_seconds: float = 900.0  # safety cap for a stuck squelch
 
-    # Squelch (measured on the 3 kHz voice slot)
+    # Squelch (measured on the 3 kHz voice slot, or the receiver's reported level)
     open_snr_db: float = 8.0
     close_snr_db: float = 5.0  # hysteresis
     noise_floor_alpha: float = 0.02  # EMA weight per block, only while closed
+    # Stale-floor recovery: after this long open, if even the quietest block of the last
+    # window is > close_snr_db above the floor, raise the floor to it (voice has pauses;
+    # steady noise does not). 0 disables. See dsp.Squelch.
+    noise_floor_window_seconds: float = 30.0
+    # Close when the median SNR over this window is below close_snr_db, so a click that
+    # resets hang_seconds cannot hold a quiet channel open. 0 disables.
+    quiet_median_seconds: float = 15.0
 
     # AGC on the demodulated audio
     agc_target: float = 0.3
@@ -250,6 +257,14 @@ class Config:
             raise ValueError("preroll_seconds must be at least 0.8 s")
         if self.close_snr_db > self.open_snr_db:
             raise ValueError("close_snr_db must not exceed open_snr_db")
+        if self.noise_floor_window_seconds < 0:
+            raise ValueError("noise_floor_window_seconds must be >= 0 (0 disables)")
+        if 0 < self.noise_floor_window_seconds < self.hang_seconds:
+            raise ValueError("noise_floor_window_seconds must be 0 or at least hang_seconds")
+        if self.quiet_median_seconds < 0:
+            raise ValueError("quiet_median_seconds must be >= 0 (0 disables)")
+        if 0 < self.quiet_median_seconds < self.hang_seconds:
+            raise ValueError("quiet_median_seconds must be 0 or at least hang_seconds")
         if self.source not in SOURCE_NAMES:
             raise ValueError(f"source must be one of {SOURCE_NAMES}, not {self.source!r}")
         self.record_dir = Path(self.record_dir)

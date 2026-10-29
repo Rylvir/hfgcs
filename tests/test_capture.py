@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import timedelta
 
 import numpy as np
@@ -124,8 +125,152 @@ def test_save_recording_catalog(tmp_path):
     assert line["start_utc"][:19] == expected
     assert line["snr_db_peak"] > 10
     assert line["frequency_khz"] == 11175.0
+    assert line["continued_from"] is None
     assert (tmp_path / "rec").glob("*.wav")
     import soundfile as sf
 
     audio, rate = sf.read(line["file"])
     assert rate == 8000 and abs(len(audio) / rate - line["duration_sec"]) < 0.01
+
+
+# Audio-rate front end: the squelch sees slot power, and a minute of audio stays cheap.
+# A tone at 0.08 on noise of 0.01 is about +16 dB in the slot. Noise at 4x amplitude
+# is about +12 dB and has no pauses, so the stale-floor window treats it as not voice.
+
+
+def audio_cap(c, khz=8992.0):
+    return ChannelCapture(c, khz, start_utc=T0, input_kind="audio", input_rate=8000)
+
+
+def feed_audio(cap, seconds, amp, tone_amp=0.0, seed=0):
+    rate = 8000
+    n = int(round(seconds * rate))
+    rng = np.random.default_rng(seed)
+    x = (amp * rng.standard_normal(n)).astype(np.float32)
+    if tone_amp:
+        t = np.arange(n) / rate
+        x = x + (tone_amp * np.sin(2 * np.pi * 1000 * t)).astype(np.float32)
+    recs = []
+    for i in range(0, n, 400):
+        recs.extend(cap.feed(x[i : i + 400]))
+    return recs
+
+
+def reported_cap(c, khz=11175.0):
+    return ChannelCapture(
+        c, khz, start_utc=T0, input_kind="audio", input_rate=8000, squelch_level="reported"
+    )
+
+
+def feed_level(cap, seconds, level_db, block=400):
+    n = int(round(seconds * 8000))
+    recs = []
+    for i in range(0, n, block):
+        recs.extend(cap.feed(np.zeros(min(block, n - i), np.float32), level_db=level_db))
+    return recs
+
+
+def test_noise_bed_raises_stale_floor_and_closes():
+    c = cfg()  # floor window 30 s, hang 2 s
+    cap = audio_cap(c)
+    feed_audio(cap, 3.0, 0.01, seed=1)
+    recs = feed_audio(cap, 50.0, 0.04, seed=2)
+    assert cap.squelch.floor_raises >= 1
+    assert len(recs) == 1 and not recs[0].truncated
+    # pre-roll + one floor window + hang, plus a second of slack
+    assert recs[0].duration_sec < c.preroll_seconds + c.noise_floor_window_seconds + c.hang_seconds + 1.0
+    assert not cap.squelch.is_open
+
+
+def test_floor_window_disabled_lets_a_loud_bed_continue_past_the_cap():
+    c = cfg(noise_floor_window_seconds=0, max_record_seconds=60.0)
+    cap = audio_cap(c)
+    feed_audio(cap, 2.0, 0.01, seed=1)
+    recs = feed_audio(cap, 70.0, 0.04, seed=3)
+    assert recs and recs[0].truncated and recs[0].duration_sec >= 59.0
+    assert cap.squelch.is_open and not cap.squelch._rearm  # median is still a real signal
+    recs += feed_audio(cap, 4.0, 0.01, seed=4)
+    assert len(recs) == 2
+    assert recs[1].continued_from == recs[0].start_utc
+
+
+def test_floor_learned_in_silence_recovers_and_still_hears_voice():
+    c = cfg(noise_floor_window_seconds=20.0, quiet_median_seconds=0)
+    cap = audio_cap(c)
+    feed_audio(cap, 0.2, 1e-4, seed=1)
+    recs = feed_audio(cap, 40.0, 0.01, seed=4)
+    assert cap.squelch.floor_raises >= 1
+    assert len(recs) == 1 and not cap.squelch.is_open
+    assert recs[0].duration_sec < c.preroll_seconds + 20.0 + c.hang_seconds + 1.0
+    recs += feed_audio(cap, 3.0, 0.01, tone_amp=0.08, seed=5)
+    recs += feed_audio(cap, 3.0, 0.01, seed=6)
+    assert len(recs) == 2 and not recs[1].truncated
+
+
+def test_keyed_speech_does_not_raise_the_floor():
+    c = cfg()
+    cap = audio_cap(c)
+    feed_audio(cap, 3.0, 0.01, seed=1)
+    recs = []
+    t = 0.0
+    seed = 10
+    while t < 90.0 - 1e-9:
+        dur = min(0.1, 90.0 - t)
+        if (t % 1.2) < 0.8:
+            recs += feed_audio(cap, dur, 0.01, tone_amp=0.08, seed=seed)
+        else:
+            recs += feed_audio(cap, dur, 0.01, seed=seed)
+        seed += 1
+        t += dur
+    assert recs == [] and cap.squelch.is_open and cap.squelch.floor_raises == 0
+    recs += feed_audio(cap, 4.0, 0.01, seed=99)
+    assert len(recs) == 1 and recs[0].duration_sec > 90.0 and not recs[0].truncated
+    assert cap.squelch.floor_raises == 0
+
+
+def test_cap_on_a_real_signal_continues(tmp_path):
+    c = cfg(max_record_seconds=6.0, noise_floor_window_seconds=0, quiet_median_seconds=2.0)
+    cap = reported_cap(c)
+    recs = feed_level(cap, 2.0, -60.0)
+    recs += feed_level(cap, 8.0, -40.0)  # snr +20, long enough for one cap and a continuation
+    recs += feed_level(cap, 4.0, -60.0)
+    assert len(recs) == 2
+    assert recs[0].truncated and recs[0].continued_from is None
+    assert recs[1].continued_from == recs[0].start_utc
+    assert not cap.squelch._rearm
+    entry = save_recording(recs[1], tmp_path / "rec", tmp_path / "cat.jsonl")
+    continued = recs[0].start_utc.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    assert entry["continued_from"] == continued
+    assert entry["truncated"] is False
+
+
+def test_cap_on_a_stuck_channel_does_not_reopen_until_louder():
+    c = cfg(
+        max_record_seconds=6.0,
+        noise_floor_window_seconds=0,
+        quiet_median_seconds=2.0,
+        min_activity_seconds=0.5,
+    )
+    cap = reported_cap(c)
+    recs = feed_level(cap, 1.0, -60.0)
+    recs += feed_level(cap, 0.6, -48.0)  # snr +12, long enough to open
+    recs += feed_level(cap, 8.0, -53.5)  # snr +6.5: above close, below open
+    assert len(recs) == 1 and recs[0].truncated and recs[0].continued_from is None
+    assert cap.squelch.floor_raises >= 1 and cap.squelch._rearm and not cap.squelch.is_open
+    assert feed_level(cap, 3.0, -53.5) == []
+    assert not cap.squelch.is_open
+    recs += feed_level(cap, 2.0, -45.0)  # >= the disarmed level + open_snr_db
+    recs += feed_level(cap, 3.0, -60.0)
+    assert len(recs) == 2 and recs[1].continued_from is None and not recs[1].truncated
+
+
+def test_squelch_logs_open_close_cap_and_a_tick(caplog):
+    c = cfg(max_record_seconds=4.0, noise_floor_window_seconds=0, quiet_median_seconds=2.0)
+    cap = reported_cap(c, khz=8992.0)
+    with caplog.at_level(logging.INFO, logger="hfgcs.squelch"):
+        feed_level(cap, 1.0, -60.0)
+        feed_level(cap, 8.0, -40.0)  # opens, then the 4 s cap continues it
+        feed_level(cap, 16.0, -60.0)  # closes the continuation; stream time passes 20 s
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert "open" in text and "close" in text and "cap" in text and "tick" in text
+    assert "8992" in text and "state=" in text and "floor=" in text and "median=" in text
