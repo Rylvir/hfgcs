@@ -144,8 +144,17 @@ blocklist_file = "kiwi_blocklist.txt"              # "host" or "host:port" per l
 ```
 
 The source runs `kiwirecorder.py --nc --nc-wav -m usb -f <dial> -L 300 -H 3000
--u <ident> --tlimit 1320` as a subprocess and reads the WAV stream from its
+-u <ident> --tlimit 1320 --progress` as a subprocess and reads the WAV stream from its
 stdout. kiwiclient is **not vendored or imported** (see THIRD_PARTY.md).
+
+**Signal level (RSSI).** The audio comes out of the Kiwi's AGC, so its loudness says
+little about signal strength. `--progress` (with `rssi = true`, the default) makes
+kiwirecorder print the Kiwi's S-meter for every audio block on stderr
+(`\rBlock: 0000002a, RSSI:  -97.3 `, carriage return only). The source reads stderr in
+chunks split on `\r` and `\n` (lines capped at 4096 characters), keeps readings within
+-170..+30 dBm, and attaches the median of the last five to each block as `level_db` for
+the v2 squelch (docs/squelch.md). A log line glued onto a progress line (kiwirecorder ends
+those with a space) is still checked for the session-end messages below.
 
 **One session per kiwirecorder process.** When a Kiwi ends a running session,
 kiwirecorder (checked against kiwiclient v1.11, commit `4eb733e`, `kiwi/worker.py`)

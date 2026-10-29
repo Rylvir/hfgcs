@@ -13,6 +13,8 @@ Behaviour is chosen by the server host name:
   kickexit.*  -> streams, prints the "server closed the connection" line, then exits 0
   redirect.*  -> streams, prints kiwiclient's redirect warning and keeps going (as if connected elsewhere)
   anything    -> writes a --nc-wav stream: 12 kHz mono, 1 kHz tone, $FAKE_KIWI_SECONDS long
+With --progress, every block written is followed on stderr by kiwiclient v1.11's
+"\rBlock: %08x, RSSI: %6.1f " line, the value from $FAKE_KIWI_RSSI (default -110.0).
 Every invocation's argv is appended to $FAKE_KIWI_LOG as one JSON line.
 """
 
@@ -53,9 +55,14 @@ t = np.arange(int(float(os.environ.get("FAKE_KIWI_SECONDS", "1.0")) * rate)) / r
 pcm = (0.3 * 32767 * np.sin(2 * np.pi * 1000 * t)).astype("<i2")
 if host.startswith("zero."):
     pcm[:] = 0
+progress = "--progress" in argv
+rssi = float(os.environ.get("FAKE_KIWI_RSSI", "-110.0"))
 for i in range(0, len(pcm), 600):
     out.write(pcm[i : i + 600].tobytes())
     out.flush()
+    if progress:
+        sys.stderr.write("\rBlock: %08x, RSSI: %6.1f " % (i // 600, rssi))
+        sys.stderr.flush()
 
 port = argv[argv.index("-p") + 1]
 if host.split(".")[0] in ("kick", "stubborn", "kickexit"):

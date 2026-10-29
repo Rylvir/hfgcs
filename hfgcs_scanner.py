@@ -22,9 +22,11 @@ from hfgcs.capture import ChannelCapture, save_recording
 from hfgcs.config import SOURCE_NAMES, Channel, Config, load_config
 from hfgcs.dsp import power_db
 from hfgcs.runstate import ConnectionEvents, RunState, safe_name, systemd_unit_name
+from hfgcs.shadow import append_events
 from hfgcs.sources import AudioSource, SourceError, TuneRefused, make_source
 
 READ_TIMEOUT = 0.5
+log = logging.getLogger("hfgcs.scanner")
 
 
 def utc_now():
@@ -120,11 +122,22 @@ class HFGCSScanner:
                 input_rate=rate,
                 receiver_id=self.source.receiver_id,
                 squelch_level=self.source.squelch_level,
+                level_reported=getattr(self.source, "level_reported", False),
             )
             self.captures[freq] = cap
         return cap
 
     # -- running ----------------------------------------------------------
+    def _save_shadow(self, cap: ChannelCapture) -> None:
+        """Write the shadow squelch's finished captures (decisions only, no audio)."""
+        if cap.shadow_events:
+            events, cap.shadow_events = cap.shadow_events, []
+            try:
+                append_events(events, self.cfg.shadow_path)
+            except OSError as exc:  # the shadow log must never stop the recorder
+                log.warning("could not write %d shadow squelch event(s) to %s: %s",
+                            len(events), self.cfg.shadow_path, exc)
+
     def _save(self, rec):
         entry = save_recording(rec, self.cfg.record_dir, self.cfg.catalog_file)
         self.saved.append(entry)
@@ -152,6 +165,7 @@ class HFGCSScanner:
             if chunk.gap or chunk.rate != cap.input_rate:
                 for rec in cap.flush():
                     self._save(rec)
+                self._save_shadow(cap)
                 cap = self.capture_for(freq, chunk.rate)
                 cap.retune(chunk.t0 or utc_now())
                 self._track(cap)
@@ -160,9 +174,11 @@ class HFGCSScanner:
             elapsed += len(chunk.samples) / chunk.rate
             for rec in cap.feed(chunk.samples, chunk.level_db):
                 self._save(rec)
+            self._save_shadow(cap)
             self._track(cap, audio=True)
         for rec in cap.flush():
             self._save(rec)
+        self._save_shadow(cap)
         self._track(cap)
         return elapsed
 

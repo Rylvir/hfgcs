@@ -527,3 +527,60 @@ def test_scanner_sigint_outside_capture_loop_is_clean(monkeypatch):
 
     monkeypatch.setattr(hfgcs_scanner, "_main", boom)
     assert hfgcs_scanner.main([]) == 0
+
+
+# -- RSSI (kiwirecorder --progress) for the v2 squelch -------------------------------------
+def test_rssi_from_progress_lines_rides_on_each_block(tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_KIWI_RSSI", "-97.5")
+    with make(["kiwi.example:8073"]) as src:
+        assert src.level_reported
+        src.tune(11175)
+        _, chunks = read_audio(src, 0.9)
+    assert "--progress" in calls(tmp_path)[0]
+    levels = [c.level_db for c in chunks if len(c.samples)]
+    assert levels and all(lv is None or lv == -97.5 for lv in levels)
+    assert levels[-1] == -97.5            # the reader thread has caught up by the end
+
+
+def test_rssi_off_runs_without_progress(tmp_path):
+    with make(["kiwi.example:8073"], rssi=False) as src:
+        assert not src.level_reported
+        src.tune(11175)
+        _, chunks = read_audio(src, 0.5)
+    assert "--progress" not in calls(tmp_path)[0]
+    assert all(c.level_db is None for c in chunks)
+
+
+def test_rssi_out_of_range_is_ignored(tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_KIWI_RSSI", "999.0")
+    with make(["kiwi.example:8073"]) as src:
+        src.tune(11175)
+        _, chunks = read_audio(src, 0.5)
+    assert all(c.level_db is None for c in chunks)
+
+
+def test_stderr_progress_lines_are_parsed_and_bounded(tmp_path):
+    """CR-only progress lines, a huge line with no newline, and a session-end line after them."""
+    script = tmp_path / "progress.py"
+    script.write_text(
+        "import sys, struct\n"
+        "for i in range(300): sys.stderr.write('\\rBlock: %08x, RSSI: %6.1f ' % (i, -100.0 - i % 3))\n"
+        "sys.stderr.write('z' * 100000)\n"
+        "sys.stderr.write('\\nkiwi.example:8073 server closed the connection cleanly.'\n"
+        "                 ' Reconnecting after 5 seconds\\n')\n"
+        "sys.stderr.flush()\n"
+        "out = sys.stdout.buffer\n"
+        "fmt = struct.pack('<HHIIHH', 1, 1, 12000, 24000, 2, 16)\n"
+        "out.write(b'RIFF' + struct.pack('<I', 0x7FFFFFF0) + b'WAVE')\n"
+        "out.write(b'fmt ' + struct.pack('<I', len(fmt)) + fmt)\n"
+        "out.write(b'data' + struct.pack('<I', 0x7FFFFFF0 - 36))\n"
+        "out.flush()\n"
+    )
+    proc = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    session = kiwisdr.KiwiSession(proc)
+    session.wait_stderr(10)
+    assert session.stderr_done.is_set()
+    assert session.rssi_count == 300 and set(session.rssi) <= {-100.0, -101.0, -102.0}
+    assert all(len(line) <= kiwisdr.MAX_STDERR_LINE for line in session.stderr_tail)
+    assert session.session_end is not None and "server closed" in session.session_end
+    session.stop()

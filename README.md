@@ -90,9 +90,13 @@ Each recording is a 16-bit WAV in `recordings/` plus one JSON line in
   Tones keep their frequency and the opposite sideband is rejected by > 80 dB.
 - Mixer phase, filter memory and decimator phase persist across blocks; one
   attack/decay AGC replaces per-block normalisation.
-- The squelch measures the 3 kHz voice slot, opens after `min_activity_seconds`,
-  stays open until the signal has been below the close level for
-  `hang_seconds`, and freezes its noise floor while open. The audio from the
+- Two squelches (docs/squelch.md). v1, the original, measures the 3 kHz voice slot,
+  opens after `min_activity_seconds`, stays open until the signal has been below the
+  close level for `hang_seconds`, and freezes its noise floor while open. v2 uses the
+  receiver's own level where there is one (KiwiSDR RSSI, OpenWebRX S-meter), opens on
+  words with pauses, ignores dropouts and static crashes, and closes a capture whose
+  level has gone flat. By default v1 records and v2 runs in shadow mode, logging what
+  it would have recorded (`python -m hfgcs.shadow` compares them). The audio from the
   activity window and `preroll_seconds` before it are kept.
 - Tuner AGC is off by default (`tuner_agc`) so dB thresholds are stable.
 
