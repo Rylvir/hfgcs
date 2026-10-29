@@ -25,7 +25,7 @@ Input is the Phase 0 catalog (`hfgcs_catalog.jsonl`, `"schema": 2`, branch `phas
 describes one recording: `start_utc` (first sample of activity), `file_start_utc` (start of the pre-roll),
 `end_utc`, `frequency_khz`, `mode`, `receiver_id`, `file` (`recordings/HFGCS_<f>kHz_<YYYYmmddTHHMMSSZ>_<receiver>.wav`,
 PCM_16 mono at 8 kHz), `sha256`, `audio_rate`, `duration_sec`, `preroll_sec`, `snr_db_peak`/`snr_db_mean`,
-`noise_floor_db` and `truncated`.
+`noise_floor_db`, `truncated` and `continued_from` (activity start of the previous file when a length cap split one transmission, otherwise null).
 
 The decoder is a separate worker. It never touches the capture process.
 
@@ -419,7 +419,7 @@ with the same sha256 and `decoder_version` is skipped (`--force` re-decodes). `-
 |---|---|
 | `schema_version` | document schema, `"1.0"` |
 | `decoder_version` | `decoding/<decoding.__version__>;parser=<parser schema>;asr=<AsrConfig.key()>;second_pass=vote3@0.3\|off` (also mirrored in `asr.decoder_version`) |
-| `recording` | `path` and `sha256` of the file decoded, then every Phase 0 schema-2 catalog field verbatim (`start_utc`, `file_start_utc`, `end_utc`, `frequency_khz`, `mode`, `receiver_id`, `file`, `audio_rate`, `duration_sec`, `preroll_sec`, `snr_db_peak`, `snr_db_mean`, `noise_floor_db`, `truncated`, `notes`). A catalog sha256 that differs from the file is kept as `catalog_sha256`. Bare audio gets `file` = `path`. |
+| `recording` | `path` and `sha256` of the file decoded, then every Phase 0 schema-2 catalog field verbatim (`start_utc`, `file_start_utc`, `end_utc`, `frequency_khz`, `mode`, `receiver_id`, `file`, `audio_rate`, `duration_sec`, `preroll_sec`, `snr_db_peak`, `snr_db_mean`, `noise_floor_db`, `truncated`, `continued_from`, `notes`). A catalog sha256 that differs from the file is kept as `catalog_sha256`. Bare audio gets `file` = `path`. |
 | `duration_s` | decoded audio length (s) |
 | `decoded_at` | ISO 8601 UTC, whole seconds, trailing `Z` |
 | `asr` | `model`, `compute_type`, `config_key`, `day_callsigns`, `duration_s`, `asr_seconds`, `text`; `words` = first-pass words `{word, start, end, probability[, snapped_to]}`; `segments` = `{start, end, text, avg_logprob, no_speech_prob, word_span}`; `first_pass` = `{config_key, model, compute_type, asr_seconds}`; `second_pass` = `{mode, enabled, threshold, configs[{config_key, overrides, snap}], fired, passes, asr_seconds, second_pass_asr_seconds}` |
