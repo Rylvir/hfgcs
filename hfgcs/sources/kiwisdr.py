@@ -26,10 +26,17 @@ Ops coverage survey) are enforced here, not left to flags:
   the session counts as failed toward the host's retirement and backoff;
 * every connection identifies itself (``ident_user`` via ``-u``; our HTTP
   ``/status`` probe sends a User-Agent).
+
+The audio comes out of the Kiwi's AGC, so its level says little about signal
+strength. With ``[kiwisdr] rssi = true`` (the default) kiwirecorder also runs with
+``--progress``, which prints the Kiwi's S-meter (RSSI, measured before the AGC) for
+every audio block on stderr; each block we hand on carries the median of the last
+few readings as ``level_db`` for the v2 squelch (docs/squelch.md).
 """
 
 from __future__ import annotations
 
+import codecs
 import logging
 import os
 import queue
@@ -44,6 +51,7 @@ import sys
 import threading
 import time
 import urllib.request
+from collections import deque
 from dataclasses import dataclass
 
 import numpy as np
@@ -91,6 +99,12 @@ SESSION_END_PATTERNS = [
     re.compile(r"sleeping and reconnecting", re.I),
 ]
 KIWIRECORDER_LOG_LEVEL = "info"  # SESSION_END_PATTERNS' first line is logged at INFO
+# kiwirecorder --progress (kiwiclient v1.11, KiwiNetcat): "\rBlock: %08x, RSSI: %6.1f %s " per block.
+RSSI_LINE = re.compile(r"^Block:\s*[0-9a-fA-F]+,\s*RSSI:\s*(-?\d+(?:\.\d+)?)")
+RSSI_RANGE_DBM = (-170.0, 30.0)  # what a Kiwi S-meter can report; anything else is ignored
+RSSI_MEDIAN_OF = 5  # readings per level (~0.2 s): one static crash does not move it
+RSSI_STALE_BLOCKS = 24  # blocks (~2 s) without a new reading: no level until one arrives
+MAX_STDERR_LINE = 4096  # progress lines end in "\r" only; never let one grow without bound
 STOP_GRACE_S = 2.0  # SIGINT grace before SIGTERM; shorter than kiwirecorder's 5 s reconnect wait
 
 # Process-wide bookkeeping shared by every KiwiSource instance.
@@ -192,6 +206,9 @@ class KiwiSession:
         self.reason: str | None = None
         self.session_end: str | None = None  # kiwirecorder line that ended the session
         self.stderr_tail: list[str] = []
+        self.rssi: deque[float] = deque(maxlen=64)  # recent --progress RSSI readings (dBm)
+        self.rssi_count = 0  # readings so far (to tell a stale level from a fresh one)
+        self._rssi_lock = threading.Lock()  # the stderr thread appends, read() copies
         self.header_ready = threading.Event()
         self.ended = threading.Event()
         self.stderr_done = threading.Event()
@@ -235,18 +252,50 @@ class KiwiSession:
             self.header_ready.set()
 
     def _stderr(self) -> None:
+        # Keep reading to EOF even after we decide to stop, so the child never blocks on a
+        # full stderr pipe. Lines end in "\n" or, for --progress, in "\r" only.
+        stream = self.proc.stderr
+        read = getattr(stream, "read1", None)
+        decode = codecs.getincrementaldecoder("utf-8")(errors="replace").decode
+        buf = ""
         try:
-            # Keep reading to EOF even after we decide to stop, so the child never
-            # blocks on a full stderr pipe.
-            for raw in self.proc.stderr:
-                line = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
-                line = line.strip()
-                if line:
-                    self._stderr_line(line)
+            chunks = iter(lambda: read(4096), b"") if read is not None else iter(stream)
+            for data in chunks:
+                buf += decode(data) if isinstance(data, bytes) else data
+                *lines, buf = re.split(r"[\r\n]", buf)
+                for line in lines:
+                    self._stderr_piece(line)
+                if len(buf) > MAX_STDERR_LINE:
+                    self._stderr_piece(buf)
+                    buf = ""
+            self._stderr_piece(buf)
         except (OSError, ValueError):
             pass
         finally:
             self.stderr_done.set()
+
+    def _stderr_piece(self, line: str) -> None:
+        line = line.strip()[:MAX_STDERR_LINE]
+        if not line:
+            return
+        m = RSSI_LINE.match(line)
+        if m:
+            value = float(m.group(1))
+            if RSSI_RANGE_DBM[0] <= value <= RSSI_RANGE_DBM[1]:
+                with self._rssi_lock:
+                    self.rssi.append(value)
+                    self.rssi_count += 1
+            # A progress line ends in a space, not a newline: the next log line (e.g. the
+            # server ending the session) is glued onto it and must still be seen.
+            line = line[m.end():].strip()
+            if not line:
+                return
+        self._stderr_line(line)
+
+    def recent_rssi(self, n: int) -> tuple[int, list[float]]:
+        """(readings so far, the last ``n`` readings)."""
+        with self._rssi_lock:
+            return self.rssi_count, list(self.rssi)[-n:]
 
     def _stderr_line(self, line: str) -> None:
         self.stderr_tail = (self.stderr_tail + [line])[-20:]
@@ -330,6 +379,33 @@ class KiwiSource(BaseSource):
         self._down_since: float | None = None  # a session ended; cleared when audio resumes
         self._last_audio_at: float | None = None  # clock time of the last block received
         self._blocked = self._load_blocklist()
+        self._rssi_seen = 0  # session.rssi_count at the last block handed on
+        self._rssi_stale = 0  # blocks handed on since a new RSSI reading arrived
+        self._rssi_blocks = 0  # blocks handed on in this session
+        self._rssi_warned = False
+
+    @property
+    def level_reported(self) -> bool:
+        """Blocks carry the Kiwi's RSSI (--progress) as ``level_db``."""
+        return bool(self.settings.rssi)
+
+    def _rssi_level(self, session: KiwiSession) -> float | None:
+        """Median of the latest RSSI readings, or None if none arrived lately."""
+        if not self.settings.rssi:
+            return None
+        self._rssi_blocks += 1
+        count, recent = session.recent_rssi(RSSI_MEDIAN_OF)
+        if count != self._rssi_seen:
+            self._rssi_seen, self._rssi_stale = count, 0
+        else:
+            self._rssi_stale += 1
+        if recent and self._rssi_stale <= RSSI_STALE_BLOCKS:
+            return float(np.median(recent))
+        if not self._rssi_warned and self._rssi_blocks > 2 * RSSI_STALE_BLOCKS:
+            self._rssi_warned = True
+            log.warning("kiwisdr: no RSSI from kiwirecorder --progress for %s; the v2 squelch has "
+                        "no level until readings arrive", self.current)
+        return None
 
     # -- policy ------------------------------------------------------------------
     def _note(self, msg: str) -> None:
@@ -468,6 +544,8 @@ class KiwiSource(BaseSource):
             # INFO shows kiwirecorder's in-process reconnect line (SESSION_END_PATTERNS).
             "--log", KIWIRECORDER_LOG_LEVEL,
         ]
+        if s.rssi:
+            cmd.append("--progress")  # per-block RSSI on stderr (does not touch the audio stream)
         if s.password:
             cmd += ["--pw", s.password]
         if s.tlimit_password:
@@ -520,6 +598,8 @@ class KiwiSource(BaseSource):
                 raise
             if session.rate and not session.session_end:
                 self.session = session
+                self._rssi_seen = self._rssi_stale = self._rssi_blocks = 0
+                self._rssi_warned = False
                 self._rate = session.rate
                 self._session_start = self._last_audio = self._clock()
                 self._gap = True
@@ -633,7 +713,7 @@ class KiwiSource(BaseSource):
             self._down_since = None
         self._last_audio_at = now
         gap, self._gap = self._gap, False
-        return Chunk(audio, self._rate, gap=gap)
+        return Chunk(audio, self._rate, gap=gap, level_db=self._rssi_level(session))
 
     def _stalled(self, session: KiwiSession) -> bool:
         """Watchdog: drop a connected session that gives no (or only all-zero) samples."""

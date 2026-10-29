@@ -259,6 +259,7 @@ class OpenWebRXSource(BaseSource):
         if self.settings.squelch not in ("smeter", "audio"):
             raise ValueError("openwebrx.squelch must be 'smeter' or 'audio'")
         self.squelch_level = "reported" if self.settings.squelch == "smeter" else "slot"
+        self.level_reported = self.squelch_level == "reported"
         self.url = ws_url(self.settings.url)
         self._connect = connect or _default_connect
         self._clock = clock or time.monotonic

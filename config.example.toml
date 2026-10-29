@@ -5,6 +5,20 @@ hang_seconds = 4.0
 preroll_seconds = 1.5
 open_snr_db = 8.0
 close_snr_db = 5.0
+# Squelch (docs/squelch.md): "v1" records today; "v2" runs alongside in shadow mode and logs
+# what it would have recorded to <catalog stem>.squelch-shadow.jsonl. Compare with
+# `python -m hfgcs.shadow --catalog <catalog>`, then switch with squelch = "v2".
+# squelch = "v1"
+# squelch_shadow = "v2"          # "" turns shadow mode off
+# shadow_file = "data/hfgcs_catalog.squelch-shadow.jsonl"
+# v2 only:
+# open_window_seconds = 3.0      # opens on min_activity_seconds above open_snr_db within this
+# warmup_seconds = 3.0           # first floor = median of this much audio
+# noise_floor_tau_seconds = 4.0
+# stuck_seconds = 20.0           # close a capture whose level has been flat this long...
+# stuck_flat_db = 2.0            # ...flat = standard deviation below this
+# long_hang_seconds = 8.0        # hang once a capture has run long_hang_after_seconds
+# long_hang_after_seconds = 10.0
 # channels = [4724, 6739, 8992, 11175, 13200, 15016]
 # Or pick named groups from hfgcs.config.FREQUENCY_GROUPS:
 # channel_groups = ["voice"]            # default
@@ -23,6 +37,7 @@ close_snr_db = 5.0
 # ident = ""                     # your callsign/name, shown to the sysop
 # hosts = ["kiwisdr.example.org:8073"]
 # channel_khz = 8992
+# rssi = true                    # kiwirecorder --progress: the Kiwi's S-meter for the v2 squelch
 #
 # [file]
 # path = "recording.wav"

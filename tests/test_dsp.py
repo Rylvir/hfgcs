@@ -86,3 +86,111 @@ def test_agc_chunked_equals_one_shot_and_levels():
     # Settles to target peak on both levels (no per-chunk normalisation).
     for seg in (one[AUDIO_RATE // 2 : AUDIO_RATE], one[2 * AUDIO_RATE :]):
         assert 0.2 < np.max(np.abs(seg)) < 0.45
+
+
+# -- v2 squelch (docs/squelch.md) -----------------------------------------------------------
+BLOCK = 0.085  # a KiwiSDR block (1024 samples at 12 kHz)
+
+
+def feed_v(sq, level, seconds, block=BLOCK):
+    return [sq.update(level, block) for _ in range(int(round(seconds / block)))]
+
+
+def word_levels(seconds, on=-48.0, off=-60.0, word=0.5, gap=0.4, block=BLOCK):
+    """Block levels of a message read word by word (no phrase longer than 0.8 s)."""
+    return [on if (i * block) % (word + gap) < word else off for i in range(int(round(seconds / block)))]
+
+
+def test_frame_powers_split_a_block_into_10ms_slices():
+    from hfgcs.dsp import frame_powers
+
+    p = frame_powers(np.r_[np.ones(80), 3 * np.ones(80), np.ones(80)], 80)
+    assert p.tolist() == [1.0, 9.0, 1.0]
+    assert len(frame_powers(np.ones(245), 80)) == 3          # a short tail joins the slices
+    assert len(frame_powers(np.ones(30), 80)) == 1 and len(frame_powers(np.zeros(0), 80)) == 0
+    assert frame_powers(np.full(160, 2j), 80).tolist() == [4.0, 4.0]
+
+
+def test_v1_ignores_non_finite_levels():
+    from hfgcs.dsp import Squelch
+
+    sq = Squelch(8.0, 5.0, 0.8, 4.0, 0.02)
+    sq.update(float("inf"), 0.1)            # an S-meter "Infinity" made the floor NaN for good
+    assert sq.noise_floor_db is None
+    for _ in range(30):
+        sq.update(-60.0, 0.1)
+    assert "open" in [sq.update(-40.0, 0.1) for _ in range(20)]
+
+
+def test_v2_warmup_floor_is_a_median_and_dropouts_teach_nothing():
+    from hfgcs.dsp import SquelchV2
+
+    sq = SquelchV2()
+    events = feed_v(sq, -200.0, 0.5) + feed_v(sq, -72.0, 1.0) + feed_v(sq, -60.0, 3.0)
+    assert set(events) == {None}            # no decisions while warming up
+    assert -60.5 < sq.noise_floor_db < -59.5   # not the AGC-settling -72 (v1 would take the -200)
+    events = feed_v(sq, -200.0, 0.5) + feed_v(sq, float("inf"), 0.3) + feed_v(sq, float("nan"), 0.3)
+    events += feed_v(sq, -60.0, 10.0)
+    assert "open" not in events and -60.5 < sq.noise_floor_db < -59.5
+
+
+def test_v2_opens_on_word_by_word_speech_that_v1_never_opens_on():
+    from hfgcs.dsp import Squelch, SquelchV2
+
+    v1, v2 = Squelch(8.0, 5.0, 0.8, 4.0, 0.02), SquelchV2()
+    for sq in (v1, v2):
+        feed_v(sq, -60.0, 4.0)
+    levels = word_levels(30.0)
+    assert "open" not in [v1.update(lv, BLOCK) for lv in levels]
+    events = [v2.update(lv, BLOCK) for lv in levels]
+    assert events.count("open") == 1 and "close" not in events
+    assert 0.8 <= v2.activity_s <= 2.0
+
+
+def test_v2_closes_a_flat_noise_bed_and_relearns_the_floor():
+    from hfgcs.dsp import SquelchV2
+
+    sq = SquelchV2()
+    feed_v(sq, -60.0, 4.0)
+    events = feed_v(sq, -48.0, 30.0)        # the band noise rises 12 dB and stays
+    assert events.count("open") == 1 and events.count("close") == 1 and sq.close_reason == "stuck"
+    open_s = (events.index("close") - events.index("open")) * BLOCK
+    assert 18.5 < open_s < 21.0
+    assert abs(sq.noise_floor_db + 48.0) < 0.5
+    assert "open" not in feed_v(sq, -48.0, 30.0)    # and does not reopen on the same bed
+
+
+def test_v2_keeps_a_long_message_with_hiss_in_its_pauses():
+    """The level moves with the speech, so it is not 'stuck', and pauses 8 dB over the band
+    noise (transmitter keyed) are still above the close level: the 150 s message stays whole."""
+    from hfgcs.dsp import SquelchV2
+
+    sq = SquelchV2()
+    feed_v(sq, -60.0, 4.0)
+    levels = [-35.0] * int(3 / BLOCK) + word_levels(87.0, on=-35.0, off=-52.0)
+    levels += [-52.0] * int(5 / BLOCK) + word_levels(60.0, on=-35.0, off=-52.0)
+    events = [sq.update(lv, BLOCK) for lv in levels]
+    assert events.count("open") == 1 and "close" not in events
+    after = feed_v(sq, -60.0, 10.0)         # transmitter off
+    assert after.count("close") == 1 and sq.close_reason == "hang"
+    assert 7.5 < after.index("close") * BLOCK < 8.5   # the long hang, after a long capture
+
+
+def test_v2_long_hang_only_after_a_long_capture():
+    from hfgcs.dsp import SquelchV2
+
+    sq = SquelchV2()
+    feed_v(sq, -60.0, 4.0)
+    early = feed_v(sq, -45.0, 3.0) + feed_v(sq, -60.0, 5.0)      # 5 s fade 3 s in: closes (4 s hang)
+    assert early.count("open") == 1 and early.count("close") == 1
+    late = feed_v(sq, -45.0, 15.0) + feed_v(sq, -60.0, 6.0) + feed_v(sq, -45.0, 2.0)
+    assert late.count("open") == 1 and "close" not in late       # 6 s fade 15 s in: bridged (8 s)
+
+
+def test_v2_settings_are_checked():
+    from hfgcs.dsp import SquelchV2
+
+    with pytest.raises(ValueError):
+        SquelchV2(min_activity_s=1.0, open_window_s=0.5)
+    with pytest.raises(ValueError):
+        SquelchV2(floor_tau_s=0.0)

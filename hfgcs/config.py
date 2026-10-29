@@ -118,6 +118,7 @@ def channels_for(*groups: str) -> tuple[Channel, ...]:
 # --- audio source settings (see docs/sources.md) ------------------------------
 
 SOURCE_NAMES = ("soapy", "openwebrx", "kiwisdr", "file")
+SQUELCH_NAMES = ("v1", "v2")  # docs/squelch.md
 
 
 @dataclass
@@ -166,6 +167,9 @@ class KiwiSettings:
     python: str = ""  # interpreter for kiwirecorder.py (default: this one)
     low_cut_hz: float = 300.0
     high_cut_hz: float = 3000.0
+    # Ask kiwirecorder for the Kiwi's S-meter (RSSI, measured before the Kiwi's AGC) on every
+    # audio block (--progress); the v2 squelch uses it instead of the AGC'd audio level.
+    rssi: bool = True
     session_max_s: float = 22 * 60.0  # release the slot before the 30 min limit
     rest_between_sessions_s: float = 60.0
     stall_timeout_s: float = 20.0  # drop a session with no non-zero samples for this long (0 = off)
@@ -219,10 +223,24 @@ class Config:
     min_activity_seconds: float = 0.8
     max_record_seconds: float = 900.0  # safety cap for a stuck squelch
 
-    # Squelch (measured on the 3 kHz voice slot)
+    # Squelch (docs/squelch.md). "v1" is the original level squelch; "v2" the audited
+    # rework. The live one records; the shadow one runs alongside on the same stream and
+    # only logs its decisions (JSON lines, shadow_file) so the two can be compared with
+    # `python -m hfgcs.shadow` before switching. squelch_shadow = "" turns that off.
+    squelch: str = "v1"
+    squelch_shadow: str = "v2"
+    shadow_file: Path | None = None  # default: <catalog stem>.squelch-shadow.jsonl beside the catalog
     open_snr_db: float = 8.0
     close_snr_db: float = 5.0  # hysteresis
-    noise_floor_alpha: float = 0.02  # EMA weight per block, only while closed
+    noise_floor_alpha: float = 0.02  # v1: EMA weight per block, only while closed
+    # v2 only
+    open_window_seconds: float = 3.0  # opens on min_activity_seconds above open_snr_db within this
+    warmup_seconds: float = 3.0  # no decisions until this much audio set the first floor (median)
+    noise_floor_tau_seconds: float = 4.0  # floor time constant while closed
+    stuck_seconds: float = 20.0  # close a capture whose level has been flat this long...
+    stuck_flat_db: float = 2.0  # ...flat = standard deviation of its levels below this (0 = never)
+    long_hang_seconds: float = 8.0  # hang once a capture has run long_hang_after_seconds
+    long_hang_after_seconds: float = 10.0
 
     # AGC on the demodulated audio
     agc_target: float = 0.3
@@ -240,6 +258,13 @@ class Config:
     file: FileSettings = field(default_factory=FileSettings)
 
     @property
+    def shadow_path(self) -> Path:
+        """Where the shadow squelch's decisions go (beside the catalog unless set)."""
+        from .shadow import default_shadow_path
+
+        return self.shadow_file if self.shadow_file is not None else default_shadow_path(self.catalog_file)
+
+    @property
     def channels_khz(self) -> list[float]:
         return [c.dial_khz for c in self.channels]
 
@@ -250,10 +275,28 @@ class Config:
             raise ValueError("preroll_seconds must be at least 0.8 s")
         if self.close_snr_db > self.open_snr_db:
             raise ValueError("close_snr_db must not exceed open_snr_db")
+        if self.squelch not in SQUELCH_NAMES:
+            raise ValueError(f"squelch must be one of {SQUELCH_NAMES}, not {self.squelch!r}")
+        if self.squelch_shadow not in ("", *SQUELCH_NAMES):
+            raise ValueError(f"squelch_shadow must be '' or one of {SQUELCH_NAMES}, "
+                             f"not {self.squelch_shadow!r}")
+        if not 0.0 <= self.noise_floor_alpha <= 1.0:
+            raise ValueError("noise_floor_alpha must be between 0 and 1")
+        if self.min_activity_seconds <= 0 or self.hang_seconds < 0 or self.max_record_seconds <= 0:
+            raise ValueError("min_activity_seconds and max_record_seconds must be > 0, hang_seconds >= 0")
+        if self.open_window_seconds < self.min_activity_seconds:
+            raise ValueError("open_window_seconds must be at least min_activity_seconds")
+        if self.warmup_seconds < 0 or self.noise_floor_tau_seconds <= 0 or self.stuck_flat_db < 0:
+            raise ValueError("warmup_seconds and stuck_flat_db must be >= 0, noise_floor_tau_seconds > 0")
+        if self.stuck_seconds < self.hang_seconds:
+            raise ValueError("stuck_seconds must be at least hang_seconds")
+        if self.long_hang_seconds < self.hang_seconds or self.long_hang_after_seconds < 0:
+            raise ValueError("long_hang_seconds must be at least hang_seconds, long_hang_after_seconds >= 0")
         if self.source not in SOURCE_NAMES:
             raise ValueError(f"source must be one of {SOURCE_NAMES}, not {self.source!r}")
         self.record_dir = Path(self.record_dir)
         self.catalog_file = Path(self.catalog_file)
+        self.shadow_file = Path(self.shadow_file) if self.shadow_file not in (None, "") else None
 
 
 def load_config(path: str | Path | None = None) -> Config:

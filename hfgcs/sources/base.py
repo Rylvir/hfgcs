@@ -41,8 +41,8 @@ class Chunk:
     samples: np.ndarray  # complex64 IQ or float32 audio in [-1, 1]
     rate: int
     t0: datetime | None = None  # UTC time of the first sample, if known
-    # Channel power the receiver itself reports for this block (e.g. the
-    # OpenWebRX S-meter), in dB. Used for squelch when the audio is AGC'd.
+    # Channel power the receiver itself reports for this block (the OpenWebRX
+    # S-meter, the KiwiSDR RSSI), in dB. Used for squelch when the audio is AGC'd.
     level_db: float | None = None
     # True when the stream was interrupted before this block (reconnect,
     # receiver moved off our channel): the scanner closes any open recording.
@@ -84,6 +84,9 @@ class BaseSource:
     name = "base"
     kind: SourceKind = "audio"
     squelch_level: Literal["slot", "reported"] = "slot"
+    #: True if blocks carry the receiver's own level (:attr:`Chunk.level_db`, measured
+    #: before any receiver AGC); the v2 squelch then uses it whatever ``squelch_level`` says.
+    level_reported = False
     #: True if the source can only ever deliver one channel (e.g. one Kiwi slot).
     single_channel = False
     #: Optional :class:`hfgcs.runstate.ConnectionEvents` the scanner attaches; connection

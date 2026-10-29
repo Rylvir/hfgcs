@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import math
 import re
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -17,7 +20,13 @@ from pathlib import Path
 import numpy as np
 
 from .config import Config
-from .dsp import Agc, AudioFrontEnd, Squelch, UsbDemodulator, power_db
+from .dsp import FRAME_SECONDS, Agc, AudioFrontEnd, Squelch, SquelchV2, UsbDemodulator, power_db
+
+log = logging.getLogger(__name__)
+
+# The v2 slot level is the median of the 10 ms slot powers over this span (across block
+# boundaries), so a static crash of up to about half of it does not count as signal.
+MEDIAN_LEVEL_SECONDS = 0.1
 
 
 @dataclass
@@ -46,8 +55,15 @@ class ChannelCapture:
     ``input_kind`` is ``"iq"`` (complex baseband at ``input_rate``, USB
     demodulated here) or ``"audio"`` (USB audio already demodulated by the
     receiver, e.g. OpenWebRX or KiwiSDR). ``squelch_level="reported"`` makes
-    the squelch use the receiver's own level (``feed(..., level_db=...)``),
-    for sources whose audio is already AGC'd.
+    the v1 squelch use the receiver's own level (``feed(..., level_db=...)``),
+    for sources whose audio is already AGC'd. ``level_reported`` says the source
+    sends such a level with its blocks (KiwiSDR RSSI, OpenWebRX S-meter); the v2
+    squelch uses it when there is one, else the median of the slot's 10 ms frame
+    powers.
+
+    ``cfg.squelch`` picks the squelch that records; ``cfg.squelch_shadow`` runs the
+    other one on the same blocks without recording. Its decisions collect in
+    :attr:`shadow_events` (dicts, one per shadow capture) for the caller to write.
     """
 
     def __init__(
@@ -60,6 +76,7 @@ class ChannelCapture:
         input_rate: int | None = None,
         receiver_id: str | None = None,
         squelch_level: str = "slot",
+        level_reported: bool = False,
     ):
         self.cfg = cfg
         self.frequency_khz = frequency_khz
@@ -87,24 +104,45 @@ class ChannelCapture:
             cfg.agc_decay_seconds,
             cfg.agc_max_gain_db,
         )
+        self.level_reported = level_reported or squelch_level == "reported"
         # The noise floor survives retunes; DSP state does not.
-        self.squelch = Squelch(
-            cfg.open_snr_db,
-            cfg.close_snr_db,
-            cfg.min_activity_seconds,
-            cfg.hang_seconds,
-            cfg.noise_floor_alpha,
-        )
-        self.ring_len = int(round((cfg.preroll_seconds + cfg.min_activity_seconds) * self.rate))
+        self.squelch, self.level_mode = self._make_squelch(cfg.squelch)
+        self.shadow = self.shadow_level_mode = None
+        if cfg.squelch_shadow and cfg.squelch_shadow != cfg.squelch:
+            self.shadow, self.shadow_level_mode = self._make_squelch(cfg.squelch_shadow)
+        self.shadow_events: list[dict] = []
+        self._shadow_open: dict | None = None
+        self._slices: deque[float] = deque(maxlen=max(1, int(round(MEDIAN_LEVEL_SECONDS / FRAME_SECONDS))))
+        # v2 may count activity from up to open_window_seconds before it opens
+        lead = cfg.open_window_seconds if cfg.squelch == "v2" else cfg.min_activity_seconds
+        self.ring_len = int(round((cfg.preroll_seconds + lead) * self.rate))
         self.retune(start_utc)
+
+    def _make_squelch(self, name: str):
+        """(squelch, level mode): "slot" = mean slot power, "reported" = the
+        receiver's level, "slot_median" = median of the 10 ms slot powers."""
+        cfg = self.cfg
+        if name == "v1":
+            sq = Squelch(cfg.open_snr_db, cfg.close_snr_db, cfg.min_activity_seconds, cfg.hang_seconds,
+                         cfg.noise_floor_alpha)
+            return sq, self.squelch_level
+        sq = SquelchV2(
+            cfg.open_snr_db, cfg.close_snr_db, cfg.min_activity_seconds, cfg.open_window_seconds,
+            cfg.hang_seconds, cfg.long_hang_seconds, cfg.long_hang_after_seconds, cfg.noise_floor_tau_seconds,
+            cfg.warmup_seconds, cfg.stuck_seconds, cfg.stuck_flat_db,
+        )
+        return sq, ("reported" if self.level_reported else "slot_median")
 
     # -- stream control -------------------------------------------------
     def retune(self, start_utc: datetime | None = None) -> None:
         """Start a fresh stream segment (after tuning). Keeps the noise floor."""
         self.demod.reset()
         self.agc.reset()
+        self._slices.clear()
         self.squelch.force_close()
         self.squelch.snr_history.clear()
+        if self.shadow is not None:
+            self._shadow_safe(self._shadow_flush)
         self.t0 = start_utc or datetime.now(timezone.utc)
         self.samples = 0  # audio samples produced in this segment
         self.ring = np.zeros(0, np.float32)
@@ -120,6 +158,13 @@ class ChannelCapture:
         return self.t0 + timedelta(seconds=sample_index / self.rate)
 
     # -- processing -----------------------------------------------------
+    def _level(self, mode: str, slot_power: float, level_db: float | None) -> float:
+        if mode == "reported":
+            return float("nan") if level_db is None else float(level_db)
+        if mode == "slot_median":
+            return power_db(float(np.median(self._slices))) if self._slices else float("nan")
+        return power_db(slot_power)
+
     def feed(self, samples: np.ndarray, level_db: float | None = None) -> list[Recording]:
         """Process one block (IQ or audio, per ``input_kind``)."""
         audio, slot_power = self.demod.process(samples)
@@ -128,22 +173,24 @@ class ChannelCapture:
         audio = self.agc.process(audio)
         block_s = len(audio) / self.rate
         self.samples += len(audio)
-        if self.squelch_level == "reported":
-            level = float("nan") if level_db is None else float(level_db)
-        else:
-            level = power_db(slot_power)
-        event = self.squelch.update(level, block_s)
+        self._slices.extend(self.demod.frame_power)
+        event = self.squelch.update(self._level(self.level_mode, slot_power, level_db), block_s)
+        if self.shadow is not None:
+            self._shadow_safe(self._feed_shadow, self._level(self.shadow_level_mode, slot_power, level_db),
+                              block_s)
         done: list[Recording] = []
 
         if self._rec is None:
             self.ring = np.concatenate([self.ring, audio])[-self.ring_len :]
             if event == "open":
-                # Activity began min_activity seconds ago; everything before
+                # Activity began activity_s seconds ago; everything before
                 # that in the ring is pre-roll.
-                activity_samples = int(round(self.cfg.min_activity_seconds * self.rate))
+                activity_samples = int(round(self.squelch.activity_s * self.rate))
                 activity_start = max(self.samples - activity_samples, self.samples - len(self.ring))
-                file_start = self.samples - len(self.ring)
-                self._rec = [self.ring.copy()]
+                # The ring may hold more than pre-roll + activity (v2 keeps open_window_seconds).
+                preroll_samples = int(round(self.cfg.preroll_seconds * self.rate))
+                file_start = max(self.samples - len(self.ring), activity_start - preroll_samples)
+                self._rec = [self.ring[len(self.ring) - (self.samples - file_start) :].copy()]
                 self._rec_meta = {
                     "start": activity_start,
                     "file_start": file_start,
@@ -163,11 +210,64 @@ class ChannelCapture:
 
     def flush(self) -> list[Recording]:
         """Close any open recording (e.g. before retuning or on shutdown)."""
+        if self.shadow is not None:
+            self._shadow_safe(self._shadow_flush)
         if self._rec is None:
             return []
         rec = self._finish(truncated=True)
         self.squelch.force_close()
         return [rec]
+
+    # -- shadow squelch ---------------------------------------------------
+    def _shadow_safe(self, fn, *args) -> None:
+        """The shadow squelch only observes: a fault in it never stops the recording."""
+        try:
+            fn(*args)
+        except Exception:
+            log.exception("shadow squelch failed on %g kHz; shadow mode is off for this channel",
+                          self.frequency_khz)
+            self.shadow = self.shadow_level_mode = self._shadow_open = None
+
+    def _shadow_flush(self) -> None:
+        if self._shadow_open is not None:
+            self._shadow_close("flush")
+        self.shadow.force_close()
+        self.shadow.snr_history.clear()
+
+    def _feed_shadow(self, level: float, block_s: float) -> None:
+        sq = self.shadow
+        event = sq.update(level, block_s)
+        if event == "open":
+            start = max(0, self.samples - int(round(sq.activity_s * self.rate)))
+            self._shadow_open = {"start": start, "noise": sq.noise_floor_db}
+        elif self._shadow_open is not None:
+            if event == "close":
+                self._shadow_close(sq.close_reason or "close")
+            elif (self.samples - self._shadow_open["start"]) / self.rate >= self.cfg.max_record_seconds:
+                self._shadow_close("cap")
+                sq.force_close()
+
+    def _shadow_close(self, reason: str) -> None:
+        """One shadow capture: what the shadow squelch would have recorded."""
+        sq, meta = self.shadow, self._shadow_open
+        snrs = [x for x in sq.snr_history if math.isfinite(x)]
+        self.shadow_events.append({
+            "schema": 1,
+            "algorithm": self.cfg.squelch_shadow,
+            "live_algorithm": self.cfg.squelch,
+            "level": self.shadow_level_mode,
+            "frequency_khz": self.frequency_khz,
+            "receiver_id": self.receiver_id,
+            "start_utc": _iso(self._time(meta["start"])),
+            "end_utc": _iso(self._time(self.samples)),
+            "duration_sec": round((self.samples - meta["start"]) / self.rate, 3),
+            "close_reason": reason,
+            "snr_db_peak": round(max(snrs), 1) if snrs else None,
+            "snr_db_mean": round(float(np.mean(snrs)), 1) if snrs else None,
+            "noise_floor_db": None if meta["noise"] is None else round(float(meta["noise"]), 1),
+        })
+        sq.snr_history.clear()
+        self._shadow_open = None
 
     def _finish(self, truncated: bool = False) -> Recording:
         meta = self._rec_meta
