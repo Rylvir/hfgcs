@@ -305,8 +305,9 @@ def cmd_ingest_catalog(args) -> int:
 # Built-in defaults; the `settings` table overrides them and CLI flags override both.
 LINK_DEFAULTS = {"link.simulcast_sec": 120.0, "link.window_hours": 48.0,
                  "link.threshold": 0.90, "link.min_known": 0.5, "link.similarity": "auto",
-                 "link.max_len_diff": 2}
+                 "link.max_len_diff": 2, "link.partial_min_len": 12}
 BUILTIN_METHOD = "builtin:wildcard_hamming:v1"
+PARTIAL_METHOD = "builtin:partial_align:v1"
 DECODING_METHOD = "decoding:text_similarity"
 
 
@@ -337,6 +338,55 @@ def builtin_similarity(a: str, b: str, min_known: float = 0.5) -> float | None:
 
 
 similarity = builtin_similarity   # backwards-compatible name
+
+
+def partial_similarity(a: str, b: str, min_len: int = 12, min_known: float = 0.5,
+                       stop_below: float | None = None) -> float | None:
+    """Score a truncated copy against a longer one: the best wildcard-Hamming score of the
+    shorter string at any offset inside the longer one. None = not comparable (equal
+    lengths, a fragment shorter than ``min_len``, or no offset with at least
+    ``max(min_len, min_known * len(fragment))`` positions known in both).
+
+    With ``stop_below``, an offset is abandoned as soon as its mismatches rule out a score
+    of ``stop_below`` (so only scores that can reach it are returned). ``link`` passes its
+    threshold: unrelated machine copies then cost a few comparisons per offset, not all."""
+    short, full = sorted((a, b), key=len)
+    n = len(short)
+    if n == len(full) or n < max(1, min_len):
+        return None
+    need = max(min_len, min_known * n)
+    max_miss = n if stop_below is None else (1.0 - stop_below) * n
+    offsets = range(len(full) - n + 1)
+    blocks = int(max_miss) + 1
+    if blocks <= n and not any(w in short or w in full for w in WILDCARDS):
+        # Without wildcards every position is compared, so an offset with at most
+        # int(max_miss) mismatches has one of `blocks` disjoint pieces of `short` matching
+        # exactly there (pigeonhole). str.find locates those offsets and skips the rest.
+        size, cand = n // blocks, set()
+        for k in range(blocks):
+            lo = k * size
+            piece = short[lo:n if k == blocks - 1 else lo + size]
+            at = full.find(piece)
+            while at != -1:
+                if 0 <= at - lo <= len(full) - n:
+                    cand.add(at - lo)
+                at = full.find(piece, at + 1)
+        offsets = sorted(cand)
+    best = None
+    for off in offsets:
+        compared = misses = 0
+        for x, y in zip(short, full[off:off + n], strict=True):
+            if x in WILDCARDS or y in WILDCARDS:
+                continue
+            compared += 1
+            if x != y:
+                misses += 1
+                if misses > max_miss:
+                    break
+        else:
+            if compared >= need and (best is None or 1 - misses / compared > best):
+                best = 1 - misses / compared
+    return best
 
 
 def resolve_similarity(mode: str, min_known: float):
@@ -416,8 +466,9 @@ def cmd_link(args) -> int:
     cfg = load_settings(con)
     for flag, key in (("simulcast_sec", "link.simulcast_sec"), ("window_hours", "link.window_hours"),
                       ("threshold", "link.threshold"), ("min_known", "link.min_known"),
-                      ("similarity", "link.similarity"), ("max_len_diff", "link.max_len_diff")):
-        if getattr(args, flag) is not None:
+                      ("similarity", "link.similarity"), ("max_len_diff", "link.max_len_diff"),
+                      ("partial_min_len", "link.partial_min_len")):
+        if getattr(args, flag, None) is not None:
             cfg[key] = getattr(args, flag)
     sim, method = resolve_similarity(cfg["link.similarity"], cfg["link.min_known"])
     simulcast_sec, window_s, threshold = (cfg["link.simulcast_sec"], cfg["link.window_hours"] * 3600,
@@ -425,6 +476,7 @@ def cmd_link(args) -> int:
     # unequal lengths are only compared by a method that scores them (Decoding's);
     # the built-in Hamming score is defined for equal lengths only
     max_len_diff = int(cfg["link.max_len_diff"]) if method == DECODING_METHOD else 0
+    partial_min_len = int(cfg["link.partial_min_len"])   # 0 turns partial links off
     rows = con.execute(
         """SELECT id, heard_utc, text_norm, prefix, receiver_id, frequency_khz,
                   (julianday(heard_utc) - 2440587.5) * 86400.0 AS t
@@ -434,39 +486,52 @@ def cmd_link(args) -> int:
            ORDER BY heard_utc, id""").fetchall()
     links = []
     j0 = 0
-    for i, a in enumerate(rows):            # rows are in time order; b is always the earlier copy
+    # rows are in time order, so b is always the earlier copy; ids need not be (backfills,
+    # imports), and message_links wants message_a < message_b, so each pair is stored by id
+    for i, a in enumerate(rows):
         while rows[j0]["t"] < a["t"] - window_s:
             j0 += 1
         la = len(a["text_norm"])
         for b in rows[j0:i]:
-            if abs(len(b["text_norm"]) - la) > max_len_diff:
-                continue
-            if a["prefix"] and b["prefix"] and "?" not in a["prefix"] + b["prefix"] \
-                    and a["prefix"] != b["prefix"]:
-                continue
-            s = sim(b["text_norm"], a["text_norm"])
-            if s is None or s < threshold:
-                continue
             d = a["t"] - b["t"]
-            kind = "simulcast" if d <= simulcast_sec else "rebroadcast"
-            links.append((b["id"], a["id"], kind, round(d, 1), round(s, 4)))
+            lb = len(b["text_norm"])
+            if abs(lb - la) <= max_len_diff and not (
+                    a["prefix"] and b["prefix"] and "?" not in a["prefix"] + b["prefix"]
+                    and a["prefix"] != b["prefix"]):
+                s = sim(b["text_norm"], a["text_norm"])
+                if s is not None and s >= threshold:
+                    kind = "simulcast" if d <= simulcast_sec else "rebroadcast"
+                    links.append((*sorted((b["id"], a["id"])), kind, round(d, 1), round(s, 4), method))
+                    continue
+            # a truncated copy: align the shorter text inside the longer one. No prefix
+            # check here, since a fragment's "prefix" is just its first two characters.
+            if partial_min_len and lb != la:
+                s = partial_similarity(b["text_norm"], a["text_norm"], partial_min_len,
+                                       cfg["link.min_known"], stop_below=threshold)
+                if s is not None and s >= threshold:
+                    links.append((*sorted((b["id"], a["id"])), "partial", round(d, 1), round(s, 4),
+                                  PARTIAL_METHOD))
     # all similarity calls are done before any write, so a failing similarity
     # function leaves the DB untouched. Only our own unconfirmed links are rebuilt;
     # source-asserted ('external:*') and human-confirmed links are kept.
-    con.execute("DELETE FROM message_links WHERE confirmed = 0 AND method IN (?, ?)",
-                (BUILTIN_METHOD, DECODING_METHOD))
+    con.execute("DELETE FROM message_links WHERE confirmed = 0 AND method IN (?, ?, ?)",
+                (BUILTIN_METHOD, DECODING_METHOD, PARTIAL_METHOD))
     con.execute("UPDATE messages SET cluster_id = NULL")
     con.execute("DELETE FROM message_clusters")
     con.executemany(
         """INSERT OR IGNORE INTO message_links(message_a, message_b, link_kind, delta_sec,
-               similarity, method) VALUES (?,?,?,?,?,?)""", [link + (method,) for link in links])
+               similarity, method) VALUES (?,?,?,?,?,?)""", links)
     # clusters from all links (incl. confirmed/manual ones kept from earlier runs)
-    dsu, sim_dsu = DSU(), DSU()
-    for a, b, kind in con.execute("SELECT message_a, message_b, link_kind FROM message_links"):
-        dsu.union(a, b)
-        if kind == "simulcast":
-            sim_dsu.union(a, b)
     info = {r["id"]: r for r in rows}
+    dsu, sim_dsu = DSU(), DSU()
+    fragments = set()   # the shorter side of each partial link: kept out of the consensus vote
+    for a, b, kind, d in con.execute(
+            "SELECT message_a, message_b, link_kind, delta_sec FROM message_links"):
+        dsu.union(a, b)
+        if kind == "simulcast" or (kind == "partial" and abs(d) <= simulcast_sec):
+            sim_dsu.union(a, b)   # a fragment heard with the full copy is the same emission
+        if kind == "partial" and a in info and b in info:
+            fragments.add(min((a, b), key=lambda i: len(info[i]["text_norm"])))
     members = defaultdict(list)
     for mid in list(dsu.p):
         members[dsu.find(mid)].append(mid)
@@ -475,13 +540,14 @@ def cmd_link(args) -> int:
         if len(ids) < 2:
             continue
         ids.sort(key=lambda i: (info[i]["heard_utc"], i))
-        texts = [info[i]["text_norm"] for i in ids]
+        texts = [info[i]["text_norm"] for i in ids if i not in fragments] \
+            or [info[i]["text_norm"] for i in ids]
         canon = consensus(texts)
         airings = len({sim_dsu.find(i) for i in ids})
         cur = con.execute(
             """INSERT INTO message_clusters(canonical_text, prefix, length, first_heard_utc,
                    last_heard_utc, n_messages, n_airings) VALUES (?,?,?,?,?,?,?)""",
-            (canon, info[ids[0]]["prefix"], len(canon),
+            (canon, info[next((i for i in ids if i not in fragments), ids[0])]["prefix"], len(canon),
              info[ids[0]]["heard_utc"], info[ids[-1]]["heard_utc"], len(ids), airings))
         con.executemany("UPDATE messages SET cluster_id = ? WHERE id = ?",
                         [(cur.lastrowid, i) for i in ids])
@@ -1054,6 +1120,9 @@ def main(argv=None) -> int:
                    help="default 2 (settings: link.max_len_diff); used only with the decoding similarity")
     s.add_argument("--similarity", choices=["auto", "builtin", "decoding"],
                    help="default auto (settings: link.similarity)")
+    s.add_argument("--partial-min-len", type=int,
+                   help="default 12 (settings: link.partial_min_len); shortest truncated copy linked "
+                        "to a longer one as 'partial'; 0 = off")
     s.set_defaults(fn=cmd_link)
     s = sub.add_parser("query", epilog=TOKEN_HELP, formatter_class=argparse.RawDescriptionHelpFormatter)
     s.add_argument("q")

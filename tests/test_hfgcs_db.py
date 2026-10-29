@@ -85,6 +85,17 @@ class DbTest(unittest.TestCase):
         run("--db", self.db, "link")  # rerun is stable
         self.assertEqual(self.q("SELECT count(*) FROM message_links")[0][0], 3)
 
+    def test_link_rows_loaded_out_of_time_order(self):
+        # a backfill can give a later-heard row the smaller id; the link must still be stored
+        self.con.execute("""INSERT INTO messages(heard_utc, msg_type, prefix, message_text) VALUES
+                            ('2031-01-01T02:00:00Z', 'EAM', 'ZZ', 'ZZTESTCCCCCCCCCCCCCCCCCCCCCCCC'),
+                            ('2031-01-01T01:00:00Z', 'EAM', 'ZZ', 'ZZTESTCCCCCCCCCCCCCCCCCCCCCCCC')""")
+        self.con.commit()
+        run("--db", self.db, "link", "--similarity", "builtin")
+        self.assertEqual(self.q("SELECT message_a, message_b, link_kind, delta_sec FROM message_links"),
+                         [(1, 2, "rebroadcast", 3600.0)])
+        self.assertEqual(self.q("SELECT n_messages FROM message_clusters"), [(2,)])
+
     def test_link_settings_precedence(self):
         self.load_fake_pipeline()
         rc, out = run("--db", self.db, "settings")
@@ -147,7 +158,8 @@ class DbTest(unittest.TestCase):
         import types
         self.load_fake_pipeline()
         self._add_short_copy()
-        run("--db", self.db, "link", "--similarity", "builtin")      # builtin: equal lengths only
+        run("--db", self.db, "link", "--similarity", "builtin",      # builtin: equal lengths only
+            "--partial-min-len", "0")                                # (partial links off)
         self.assertEqual(self.q("SELECT n_messages FROM message_clusters"), [(3,)])
         pkg = types.ModuleType("decoding")
         pkg.__path__ = []
@@ -160,7 +172,8 @@ class DbTest(unittest.TestCase):
             run("--db", self.db, "link", "--similarity", "decoding")
             self.assertEqual(self.q("SELECT n_messages, length, canonical_text FROM message_clusters"),
                              [(4, 30, "ZZTESTCCCCCCCCCCCCCCCCCCCCCCCC")])   # modal-length consensus
-            run("--db", self.db, "link", "--similarity", "decoding", "--max-len-diff", "0")
+            run("--db", self.db, "link", "--similarity", "decoding", "--max-len-diff", "0",
+                "--partial-min-len", "0")
             self.assertEqual(self.q("SELECT n_messages FROM message_clusters"), [(3,)])
         finally:
             for k, v in saved.items():
@@ -168,6 +181,87 @@ class DbTest(unittest.TestCase):
                     sys.modules.pop(k, None)
                 else:
                     sys.modules[k] = v
+
+    def test_partial_similarity(self):
+        ps = hfgcs_db.partial_similarity
+        full = "ZZTESTABCDEFGHIJKLMNOPQRSTUVWX"
+        self.assertEqual(ps(full[:14], full), 1.0)               # cut at the end
+        self.assertEqual(ps(full, full[10:]), 1.0)               # started mid-message, either order
+        self.assertAlmostEqual(ps("ZZTESTABCDEFGHIZ", full), 15 / 16)
+        self.assertIsNone(ps(full, full))                        # equal lengths: not a partial
+        self.assertIsNone(ps(full[:11], full))                   # shorter than min_len
+        self.assertIsNone(ps("ZZTEST........", full))            # too few known characters
+        self.assertLess(ps("QQQQQQQQQQQQQQ", full), 0.1)
+        # stop_below only drops offsets that cannot reach it; the score of one that can is unchanged
+        self.assertIsNone(ps("QQQQQQQQQQQQQQ", full, stop_below=0.9))
+        self.assertAlmostEqual(ps("ZZTESTABCDEFGHIZ", full, stop_below=0.9), 15 / 16)
+        self.assertIsNone(ps("ZZTESTABCDEFGHZZ", full, stop_below=0.9))   # 14/16 = 0.875
+        # the str.find shortcut and the early exit give the same answer as checking every offset
+        import random
+
+        def reference(a, b, stop_below=None, min_len=12, min_known=0.5):
+            short, full_ = sorted((a, b), key=len)
+            n = len(short)
+            if n == len(full_) or n < min_len:
+                return None
+            max_miss = n if stop_below is None else (1.0 - stop_below) * n
+            scores = []
+            for off in range(len(full_) - n + 1):
+                pairs = [(x, y) for x, y in zip(short, full_[off:off + n], strict=True)
+                         if x not in ".?" and y not in ".?"]
+                miss = sum(x != y for x, y in pairs)
+                if len(pairs) >= max(min_len, min_known * n) and miss <= max_miss:
+                    scores.append(1 - miss / len(pairs))
+            return max(scores, default=None)
+
+        rnd = random.Random(3)
+        for _ in range(2000):
+            alpha = rnd.choice(["ABC", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", "AB.", "ABCD?"])
+            long_ = "".join(rnd.choice(alpha) for _ in range(rnd.randint(12, 45)))
+            off = rnd.randint(0, 10)
+            frag = list(long_[off:off + rnd.randint(10, 35)])
+            for _ in range(rnd.randint(0, 5)):
+                if frag:
+                    frag[rnd.randrange(len(frag))] = rnd.choice(alpha)
+            frag = "".join(frag)
+            for stop in (None, 0.9, 0.5):
+                self.assertEqual(ps(frag, long_, stop_below=stop), reference(frag, long_, stop),
+                                 (frag, long_, stop))
+
+    def test_link_partial_copies(self):
+        self.load_fake_pipeline()
+        # a fragment cut off after 16 characters, heard alongside the first airing on a
+        # third receiver, and a mid-message fragment 2 h later; its "prefix" is not the real one
+        self.con.execute("""INSERT INTO messages(heard_utc, msg_type, callsign, prefix, message_text, partial)
+                            VALUES ('2031-01-01T00:05:40Z', 'EAM', 'TESTCALL', 'ZZ',
+                                    'ZZTESTCCCCCCCCCC', 1),
+                                   ('2031-01-01T02:00:00Z', 'EAM', NULL, 'CC',
+                                    'CCCCCCCCCCCCCCCCCC', 1),
+                                   ('2031-01-01T02:10:00Z', 'EAM', NULL, 'QQ',
+                                    'QQQQQQQQQQQQQQQQQQ', 1)""")
+        self.con.commit()
+        rc, out = run("--db", self.db, "link", "--similarity", "builtin")
+        self.assertEqual(rc, 0)
+        self.assertIn("'partial'", out)
+        kinds = self.link_kinds()
+        self.assertEqual(kinds["simulcast"], 1)
+        self.assertEqual(kinds["rebroadcast"], 2)
+        self.assertGreaterEqual(kinds["partial"], 2)
+        self.assertEqual(self.q("SELECT DISTINCT method FROM message_links WHERE link_kind='partial'"),
+                         [("builtin:partial_align:v1",)])
+        # one cluster; the vote ignores the fragments; the fragment heard with the first
+        # airing is the same emission, the later one is a third airing
+        self.assertEqual(self.q("SELECT n_messages, n_airings, prefix, length, canonical_text "
+                                "FROM message_clusters"),
+                         [(5, 3, "ZZ", 30, "ZZTESTCCCCCCCCCCCCCCCCCCCCCCCC")])
+        self.assertEqual(self.q("SELECT cluster_id FROM messages WHERE message_text LIKE 'QQ%'"), [(None,)])
+        n = self.q("SELECT count(*) FROM message_links")[0][0]
+        run("--db", self.db, "link", "--similarity", "builtin")   # rerun is stable
+        self.assertEqual(self.q("SELECT count(*) FROM message_links")[0][0], n)
+        run("--db", self.db, "settings", "link.partial_min_len", "0")
+        run("--db", self.db, "link", "--similarity", "builtin")
+        self.assertNotIn("partial", self.link_kinds())
+        self.assertEqual(self.q("SELECT n_messages FROM message_clusters"), [(3,)])
 
     @unittest.skipUnless(importlib.util.find_spec("decoding") is not None
                          and importlib.util.find_spec("decoding.similarity") is not None,

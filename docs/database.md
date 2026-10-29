@@ -59,9 +59,10 @@ In the repo (commit `55fe420`), `hfgcs_scanner.py` writes `recordings/HFGCS_<kHz
    - The built-in computes matches ÷ positions where both characters are known.
    - It needs at least `max(6, min_known × length)` known positions, or the pair is not compared.
    - A link is made when similarity ≥ `threshold`.
-5. **Kind:** Δt ≤ `simulcast_sec` is a `simulcast` (the same emission on another receiver or frequency). A later copy within `window_hours` is a `rebroadcast`.
-6. **Clusters:** union-find over all links, then per-position majority vote for `canonical_text`, taken over the copies of the most common length (ties go to the longer). The cluster's `length` is that of `canonical_text`. `n_airings` counts simulcast-connected components.
-7. **Reruns:** every similarity is computed before anything is written, so a failing similarity function leaves the DB unchanged. Only our own unconfirmed links (`builtin:*`, `decoding:*`) are rebuilt. Human-confirmed links and source-asserted links (`external:missileer`) are kept.
+   - **Truncated copies (`partial`):** when two copies of different lengths are not linked by the steps above, the shorter one is slid along the longer one and scored with the built-in at each offset (`builtin:partial_align:v1`). The best offset must have at least `max(partial_min_len, min_known × fragment length)` characters known in both and reach `threshold`. The prefix rule is skipped here, because a fragment that starts mid-message has the wrong two characters as its prefix. This runs whichever similarity method is chosen; `partial_min_len = 0` turns it off.
+5. **Kind:** Δt ≤ `simulcast_sec` is a `simulcast` (the same emission on another receiver or frequency). A later copy within `window_hours` is a `rebroadcast`. A truncated copy is a `partial`; for `n_airings`, a partial heard within `simulcast_sec` of its full copy counts as the same emission.
+6. **Clusters:** union-find over all links, then per-position majority vote for `canonical_text`, taken over the copies of the most common length (ties go to the longer). The shorter side of each partial link is left out of the vote, and the cluster's prefix comes from its earliest full copy. The cluster's `length` is that of `canonical_text`. `n_airings` counts simulcast-connected components.
+7. **Reruns:** every similarity is computed before anything is written, so a failing similarity function leaves the DB unchanged. Only our own unconfirmed links (`builtin:*`, `decoding:*`) are rebuilt. Each pair is stored with the smaller message id as `message_a` and `delta_sec = |Δt|`, so rows loaded out of time order (backfills, imports) still link. Human-confirmed links and source-asserted links (`external:missileer`) are kept.
 
 **Settings.** Precedence is CLI flag > `settings` table > built-in default.
 
@@ -73,6 +74,7 @@ In the repo (commit `55fe420`), `hfgcs_scanner.py` writes `recordings/HFGCS_<kHz
 | `link.min_known` | 0.5 | `--min-known` (both methods; passed to Decoding's function as keyword-only `min_known`) |
 | `link.similarity` | `auto` | `--similarity auto\|builtin\|decoding` |
 | `link.max_len_diff` | 2 | `--max-len-diff` (Decoding's similarity only) |
+| `link.partial_min_len` | 12 | `--partial-min-len` (shortest truncated copy linked as `partial`; 0 = off) |
 
 - View settings with `hfgcs_db.py settings`; change one with `hfgcs_db.py settings link.threshold 0.92`. They are also visible in Datasette (`link_settings`).
 - **These defaults are provisional.** They will be tuned against missileer.watch data (co-receptions, rebroadcast links and listener corrections are ground truth) once Decoding has an evaluation set. Each change will be recorded here with its precision and recall.
@@ -92,7 +94,7 @@ def text_similarity(a: str, b: str, *, min_known: float = 0.5) -> float | None: 
 - **Equal lengths:** the score must never fall below the built-in wildcard Hamming score, and it equals it when there are only substitutions.
 - **Unequal lengths:** `1 − d / max(len_a, len_b)`, where `d` is the wildcard-aware edit distance.
   - Normalizing by the longer copy means a dropped or inserted character costs about 1/length (29 vs 30 characters scores 0.967 and links).
-  - A truncated copy scores low (20 of 30 characters gives 0.67) and is not merged. A future `partial` link kind covers truncated copies.
+  - A truncated copy scores low (20 of 30 characters gives 0.67) and is not merged. Truncated copies are linked separately as `partial` (§3, step 4).
 - **Edit distance:** banded at |Δlen| + 8. A banded result can only overestimate the distance, so it can miss a link but never create one.
 - **Contract:** pure and deterministic, with no I/O or global state, and fast (on the order of 10⁴–10⁵ calls per run). Importing it must not pull in heavy dependencies such as the ASR stack.
 - **Selection:** with `--similarity auto` (the default), the tool uses this function when it is importable (from the repo root or `PYTHONPATH`) and otherwise falls back to the built-in. `decoding` makes the function mandatory; `builtin` never imports it. Links record which method made them: `decoding:text_similarity` or `builtin:wildcard_hamming:v1`.
@@ -129,7 +131,7 @@ Runtime: builtin 0.2 s, decoding 1.5 s.
 - Of 147 rows with NEET's `&` qualifier, the algorithm placed 142 as later airings. That supports reading `&` as "repeat".
 
 **Not handled in v1:**
-- Truncated copies of different lengths (planned: a `partial` link via prefix alignment).
+- ~~Truncated copies of different lengths~~: done, as `partial` links by alignment (§3, step 4). Not yet tuned or measured on real fragments. Known gap: `v_our_daily_eams.eam_broadcasts` still counts only `simulcast` links, so a fragment heard alongside its full copy counts as a separate broadcast there (it no longer counts as a separate distinct message).
 - Re-reads within one transmission ("I say again"). The parser should handle those before rows reach the DB.
 
 ## 4. NEET INTEL CSV mapping (import/export, exact format)

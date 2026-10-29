@@ -36,7 +36,8 @@ INSERT OR IGNORE INTO settings(key, value, description) VALUES
  ('link.threshold',     '0.90', 'min text similarity (0..1) to link two copies'),
  ('link.min_known',     '0.5',  'min fraction of positions known in both copies (builtin only; decoding fixes 0.5 in code)'),
  ('link.similarity',    'auto', 'auto = decoding.similarity.text_similarity if importable, else builtin; or builtin / decoding'),
- ('link.max_len_diff',  '2',    'max length difference compared (decoding similarity only; builtin compares equal lengths)');
+ ('link.max_len_diff',  '2',    'max length difference compared (decoding similarity only; builtin compares equal lengths)'),
+ ('link.partial_min_len', '12', 'shortest truncated copy (chars known in both) linked to a longer copy as partial; 0 = off');
 
 -- ---------------------------------------------------------------------------
 -- Message type taxonomy (lookup table, enforced by FK from messages.msg_type).
@@ -285,7 +286,7 @@ CREATE TABLE IF NOT EXISTS message_links (
     message_a   INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
     message_b   INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
     link_kind   TEXT NOT NULL CHECK (link_kind IN ('simulcast','rebroadcast','partial','manual')),
-    delta_sec   REAL NOT NULL,               -- heard_utc(b) - heard_utc(a)
+    delta_sec   REAL NOT NULL,               -- |heard_utc(b) - heard_utc(a)|
     similarity  REAL NOT NULL CHECK (similarity BETWEEN 0 AND 1),
     method      TEXT NOT NULL,               -- 'builtin:wildcard_hamming:v1', 'decoding:text_similarity', 'external:missileer', 'manual'
     confirmed   INTEGER NOT NULL DEFAULT 0 CHECK (confirmed IN (0,1)),
