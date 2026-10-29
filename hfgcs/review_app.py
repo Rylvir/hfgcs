@@ -444,7 +444,10 @@ class ReviewHandler(BaseHTTPRequestHandler):
         else:
             editor, source = self.settings.default_editor, "default"
         ret = form.get("return") or "/"
-        if not ret.startswith("/") or ret.startswith("//") or "\\" in ret:
+        # Control characters too: browsers drop tabs/newlines ("/<tab>/evil" is "//evil"),
+        # and CR/LF would split the Location header.
+        if (not ret.startswith("/") or ret.startswith("//") or "\\" in ret
+                or any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in ret)):
             ret = "/"
         cookies = [] if cf or source != "form" else [
             f"{EDITOR_COOKIE}={_cookie_safe(editor)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000"]

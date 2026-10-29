@@ -351,3 +351,14 @@ def test_refuses_db_without_review_tables(tmp_path):
         review_db.connect(p)
     review_db.connect(p, migrate=True).close()
     review_db.connect(p).close()
+
+
+def test_return_target_cannot_leave_site_or_inject_headers(env):
+    # Browsers drop tabs/newlines in URLs ("/\t/evil" -> "//evil"); CR/LF would
+    # also split the Location header.
+    for bad in ("/\t/evil.example", "/\r\nSet-Cookie: x=1", "//evil.example", "/\\evil.example"):
+        html, _, tok = page(env)
+        r, _ = post(env, "/message/10", save_form(**{"return": bad}), token=tok)
+        assert r.status == 303
+        assert r.getheader("Location") == "/?saved=1", bad
+        assert "x=1" not in (r.getheader("Set-Cookie") or "")
