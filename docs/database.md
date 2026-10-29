@@ -50,7 +50,7 @@ In the repo (commit `55fe420`), `hfgcs_scanner.py` writes `recordings/HFGCS_<kHz
 - There is no migration tool yet. `CREATE … IF NOT EXISTS` will not add columns to an existing DB. Once real data exists, add numbered migrations keyed on `schema_version`.
 
 ## 3. Dedup / rebroadcast algorithm (`hfgcs_db.py link`)
-1. **Candidates:** EAM and Skyking rows that are not rejected and have a real body (not `_` or `%`).
+1. **Candidates:** EAM and Skyking rows that are not rejected. Text comparisons need a real body (not empty, `_` or `%`); time matching (step 5) does not.
 2. **Normalize:** `text_norm` = upper-case with spaces, tabs and hyphens removed. `.` and `?` are wildcards.
 3. **Blocking:** compare rows within the rebroadcast window whose normalized lengths differ by at most `max_len_diff`. Prefixes must agree when both are known.
    - The default `max_len_diff` is 2, and it applies only with Decoding's similarity.
@@ -60,9 +60,23 @@ In the repo (commit `55fe420`), `hfgcs_scanner.py` writes `recordings/HFGCS_<kHz
    - It needs at least `max(6, min_known × length)` known positions, or the pair is not compared.
    - A link is made when similarity ≥ `threshold`.
    - **Truncated copies (`partial`):** when two copies of different lengths are not linked by the steps above, the shorter one is slid along the longer one and scored with the built-in at each offset (`builtin:partial_align:v1`). The best offset must have at least `max(partial_min_len, min_known × fragment length)` characters known in both and reach `threshold`. The prefix rule is skipped here, because a fragment that starts mid-message has the wrong two characters as its prefix. This runs whichever similarity method is chosen; `partial_min_len = 0` turns it off.
-5. **Kind:** Δt ≤ `simulcast_sec` is a `simulcast` (the same emission on another receiver or frequency). A later copy within `window_hours` is a `rebroadcast`. A truncated copy is a `partial`; for `n_airings`, a partial heard within `simulcast_sec` of its full copy counts as the same emission.
-6. **Clusters:** union-find over all links, then per-position majority vote for `canonical_text`, taken over the copies of the most common length (ties go to the longer). The shorter side of each partial link is left out of the vote, and the cluster's prefix comes from its earliest full copy. The cluster's `length` is that of `canonical_text`. `n_airings` counts simulcast-connected components.
-7. **Reruns:** every similarity is computed before anything is written, so a failing similarity function leaves the DB unchanged. Only our own unconfirmed links (`builtin:*`, `decoding:*`) are rebuilt. Each pair is stored with the smaller message id as `message_a` and `delta_sec = |Δt|`, so rows loaded out of time order (backfills, imports) still link. Human-confirmed links and source-asserted links (`external:missileer`) are kept.
+5. **Time matching (`builtin:time_match:v1`):** two copies that the text comparison did not link are the same transmission when:
+   - they have the same type, and their spoken lengths (`announced_length`) and addressees (spaces and case ignored) do not disagree; and
+   - their start times are within `time_window_sec` (30 s, plus 60 s for each `log_minute` row, since NEET logs give only the minute), **or** one is a fragment (`partial = 1`) that starts inside the other's decoded span (`start_s`..`end_s`, less `time_window_sec` at the end, where the next message may begin). Spans over 600 s, such as a squelch stuck open on noise, are not used for this.
+   - The link is a `simulcast`. Its `similarity` is only the text agreement (1 − edit distance ÷ longer length), for review; it is not what made the link.
+   - **Why:** machine copies rarely reach the text threshold. The two readings of one EAM in `tests/fixtures/decode_sample_two_broadcasts.decode.json` score 0.75 against each other with Decoding's similarity, and on a synthetic month of machine-quality decodes the text comparison linked nothing.
+   - **Assumption:** one message is on the air at a time. Two different EAMs starting within the window on different frequencies would be merged; type, spoken length and addressee are the only guards. `link --dry-run` lists every time match with its text agreement, to check this on real data.
+   - Order per pair: a pair that reaches the text threshold keeps its text method (and is a `simulcast` if it is also time-matched); otherwise a time match; otherwise partial alignment. `time_window_sec = 0` turns time matching off.
+6. **Kind:** Δt ≤ `simulcast_sec` is a `simulcast` (the same emission on another receiver or frequency), and so is any time match. A later copy within `window_hours` is a `rebroadcast`. A truncated copy is a `partial`; for `n_airings`, a partial heard within `simulcast_sec` of its full copy counts as the same emission.
+7. **Clusters:** union-find over all links. `n_airings` counts simulcast-connected components. `canonical_text` is a weighted vote:
+   - **Weights.** A person's copy (`review_status = 'reviewed'`, `corrected = 1` or `origin = 'manual'`: the review app, NEET logs, missileer corrections) weighs 10 per character, so it decides wherever it covers. A machine copy uses the decoder's per-character confidence (`char_confidence`, when it lines up with the text), else the row's `confidence`, else 0.5 (missileer's uncorrected text).
+   - **One vote per transcription.** missileer repeats a message's text on each of its receptions, so its rows vote once per message.
+   - **Frame.** A full copy (not `partial`, not the shorter side of a partial link): a person's copy if there is one. Otherwise the most common text, then the length that matches the spoken length, then the copy with the fewest edits to the others (up to 12 candidates), then the highest mean weight.
+   - **Vote.** Every copy is aligned into the frame (a fragment can sit anywhere; gaps inside cost 1) and votes per position. A position that most of the copies spanning it skip is dropped (an insertion in the frame). A position with no votes is `.`.
+   - The cluster's prefix is the first two characters of `canonical_text` for EAMs (otherwise the earliest full copy's). The cluster's `length` is that of `canonical_text`.
+8. **Vote check.** For clusters that have a person's full copy and machine copies, `link` prints the character error rate of the machine-only vote against the person's text, next to the mean of the single machine copies. A `.` or `?` in the person's copy is free; in a machine copy it counts as wrong. On the synthetic month (3,441 rows, about 48 % of characters wrong per copy, errors independent) the vote scored 0.39 against 0.48. Real decoder errors are more correlated, so expect less; this line measures it on real data.
+9. **Dry run.** `link --dry-run` does all of the above in a transaction, prints the summary, the vote check and the time matches (time, Δt, type, `receiver@kHz` of both copies, text agreement, the start of both texts; `--show N`, 0 = all), then rolls back.
+10. **Reruns:** every similarity is computed before anything is written, so a failing similarity function leaves the DB unchanged. Only our own unconfirmed links (`builtin:*`, `decoding:*`) are rebuilt. Each pair is stored with the smaller message id as `message_a` and `delta_sec = |Δt|`, so rows loaded out of time order (backfills, imports) still link. Human-confirmed links and source-asserted links (`external:missileer`) are kept.
 
 **Settings.** Precedence is CLI flag > `settings` table > built-in default.
 
@@ -75,9 +89,11 @@ In the repo (commit `55fe420`), `hfgcs_scanner.py` writes `recordings/HFGCS_<kHz
 | `link.similarity` | `auto` | `--similarity auto\|builtin\|decoding` |
 | `link.max_len_diff` | 2 | `--max-len-diff` (Decoding's similarity only) |
 | `link.partial_min_len` | 12 | `--partial-min-len` (shortest truncated copy linked as `partial`; 0 = off) |
+| `link.time_window_sec` | 30 | `--time-window-sec` (copies of one type starting this close are one transmission; 0 = off) |
 
 - View settings with `hfgcs_db.py settings`; change one with `hfgcs_db.py settings link.threshold 0.92`. They are also visible in Datasette (`link_settings`).
 - **These defaults are provisional.** They will be tuned against missileer.watch data (co-receptions, rebroadcast links and listener corrections are ground truth) once Decoding has an evaluation set. Each change will be recorded here with its precision and recall.
+- **Runtime.** `link` recomputes every link on each run (it runs after every `load-decodes`). On a synthetic month of machine-quality decodes (3,441 rows) it takes 4.0 s with the built-in similarity and 28.7 s with Decoding's (20.5 s on main before partial and time matching; Decoding's similarity dominates). Both grow with the history, so a long-running DB will want an incremental `link`.
 
 ### 3.1 Interface expected from Decoding (implemented: `decoding-design` @ `e423642`, merged to main)
 ```python
@@ -224,7 +240,9 @@ The type names were informed by eam.watch's public categories (`ALLSTATIONS, SKY
 - `eam_broadcasts` = per broadcast: simulcast copies collapsed, rebroadcasts counted.
 - `eam_receptions` = every row.
 
-**Coverage.** `v_coverage_comparison` is **per distinct message**: `coverage_pct = our_eams / external_count` and `diff = our_eams − external_count`. `our_broadcasts` is shown for information only. Tested with fake counts.
+**Coverage.** `v_coverage_comparison` is **per distinct message**: `coverage_pct = our_eams / external_count` and `diff = our_eams − external_count`. `our_broadcasts` is shown for information only. Tested with fake counts. For a per-airing comparison with missileer.watch (which transmissions both heard, only we heard, only they heard), see `hfgcs_db.py coverage` (§13).
+
+**Machine copies.** Time matching (§3, step 5) joins copies of one transmission even when their texts disagree, so simultaneous copies collapse in `eams` and `eam_broadcasts`. Rebroadcasts heard only as machine copies still rarely link by text, so on machine data `eams` (distinct) still over-counts repeats until the decoder improves.
 
 **warwatchintel: manual CSV only, no scraping (decision 4).**
 - warwatchintel.com shows no data licence. Its robots.txt sets `Content-Signal: search=yes, ai-train=no, use=reference` and blocks AI crawlers.
@@ -424,3 +442,15 @@ flag list of every broadcast is in `message_decodes.record_json`.
   `decoding.output.build_document`, so the loader tests follow the writer.
 - `schema_version` (`"1.0"`) is stored only inside `message_decodes.record_json`; the loader does not
   branch on it.
+
+## 13. Coverage against missileer.watch (`hfgcs_db.py coverage`)
+```bash
+hfgcs_db.py --db "$HFGCS_DB" link       # after import-missileer, so its receptions are time-matched to ours
+hfgcs_db.py --db "$HFGCS_DB" coverage --list                   # whole UTC days on which both have copies
+hfgcs_db.py --db "$HFGCS_DB" coverage --since 2026-10-26 --until 2026-10-28
+```
+- Counts **airings**: copies joined by `simulcast` links (text, time-matched, or missileer's own co-receptions) or by a partial within `simulcast_sec` count once. Rebroadcasts are separate airings.
+- **Ours** = rows with no external source (decoder and review app). **Theirs** = rows from `--source` (default `missileer`). Rows from other sources (NEET) are ignored.
+- One row per UTC day and type: `both`, `ours only`, `missileer only`, and `caught` = both ÷ (both + missileer only), the share of missileer's airings we also heard.
+  - `ours only` is either an airing missileer missed (all of its receivers are on 11175 kHz) or a false copy of ours, such as a decoder hallucination. `--list` shows each airing with the receivers on both sides and its text, to tell them apart.
+- It reads the links of the last `link` run. `import-missileer` does not run `link`; `load-decodes` does after every new decode, or run it by hand as above.
