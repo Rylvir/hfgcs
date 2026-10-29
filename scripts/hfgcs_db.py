@@ -211,7 +211,8 @@ def catalog_entry_to_capture(e: dict) -> dict:
       ``start_utc`` (activity onset), ``file_start_utc`` (start of pre-roll),
       ``end_utc``, ``frequency_khz``, ``mode``, ``receiver_id``, ``file``,
       ``sha256``, ``audio_rate``, ``duration_sec``, ``preroll_sec``,
-      ``snr_db_peak``, ``snr_db_mean``, ``noise_floor_db``, ``truncated``, ``notes``.
+      ``snr_db_peak``, ``snr_db_mean``, ``noise_floor_db``, ``truncated``,
+      ``continued_from`` (kept in ``raw_json``), ``notes``.
       The capture spans the whole file (``file_start_utc`` .. ``end_utc``) and
       ``voice_start_s`` = ``preroll_sec`` (seconds into the WAV where activity starts).
     * legacy (hfgcs_scanner.py): ``{timestamp, frequency_khz, file, duration_sec,
