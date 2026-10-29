@@ -9,7 +9,8 @@ Subcommands
   export-neet     export messages in the same CSV format
   ingest-catalog  load the recorder's hfgcs_catalog.jsonl into `captures` (schema 2 or legacy)
   load-decodes    load Decoding's <wav>.decode.json / decodes.jsonl into messages (keeps human edits)
-  link            find simulcast/rebroadcast copies and rebuild clusters
+  link            find simulcast/rebroadcast/partial copies (by text and by time), rebuild clusters
+  coverage        per-airing comparison with missileer.watch: heard by both, only us, only them
   query           run a NEET-style query string (e.g. "2601&C30&G1&PR=CZ")
   import-missileer  upsert missileer.watch's CC0 archive.json (URL or file; read-only GET)
   import-daily-counts  load hand-entered external daily EAM counts from a CSV (no fetching)
@@ -305,10 +306,23 @@ def cmd_ingest_catalog(args) -> int:
 # Built-in defaults; the `settings` table overrides them and CLI flags override both.
 LINK_DEFAULTS = {"link.simulcast_sec": 120.0, "link.window_hours": 48.0,
                  "link.threshold": 0.90, "link.min_known": 0.5, "link.similarity": "auto",
-                 "link.max_len_diff": 2, "link.partial_min_len": 12}
+                 "link.max_len_diff": 2, "link.partial_min_len": 12, "link.time_window_sec": 30.0}
 BUILTIN_METHOD = "builtin:wildcard_hamming:v1"
 PARTIAL_METHOD = "builtin:partial_align:v1"
+TIME_METHOD = "builtin:time_match:v1"
 DECODING_METHOD = "decoding:text_similarity"
+OWN_METHODS = (BUILTIN_METHOD, DECODING_METHOD, PARTIAL_METHOD, TIME_METHOD)   # rebuilt by every run
+NO_TEXT = {"", *NO_BODY}
+# Time matching (docs/database.md section 3): extra start-time slack by heard_at_basis (NEET logs
+# give only the minute), and the longest decoded span trusted to place a fragment inside it (a
+# squelch stuck open on noise decodes as one very long "broadcast").
+BASIS_SLACK_SEC = {"log_minute": 60.0}
+MAX_BROADCAST_SEC = 600.0
+# Cluster text vote: per-character weight of a copy a person typed, corrected or checked, and
+# of a machine copy with no confidence at all (missileer's uncorrected text).
+HUMAN_WEIGHT = 10.0
+NO_CONFIDENCE_WEIGHT = 0.5
+MAX_SPREAD_COPIES = 12   # largest set of candidate frames compared pairwise
 
 
 def load_settings(con) -> dict:
@@ -450,15 +464,228 @@ class DSU:
             self.p[max(ra, rb)] = min(ra, rb)
 
 
-def consensus(texts: list[str]) -> str:
-    """Per-position majority over the copies of the modal length (ties -> longer)."""
-    lengths = Counter(len(t) for t in texts)
-    modal = max(lengths, key=lambda n: (lengths[n], n))
+# ------------------------------------------------------------- time matching
+def same_emission(a, b, window: float) -> bool:
+    """True when copies ``a`` and ``b`` are the same transmission by time, whatever their
+    texts say: same type, no spoken length or addressee that disagrees, and either their
+    start times agree within ``window`` seconds (plus slack for minute-precision logs), or
+    one is a fragment (``partial``) that starts inside the other's decoded span.
+
+    Rows need ``t`` (epoch s), ``dur_s``, ``msg_type``, ``partial``, ``announced_length``,
+    ``addressee`` and ``heard_at_basis``."""
+    if window <= 0 or a["msg_type"] != b["msg_type"]:
+        return False
+    if a["announced_length"] and b["announced_length"] and a["announced_length"] != b["announced_length"]:
+        return False
+    if a["addressee"] and b["addressee"] and \
+            a["addressee"].replace(" ", "").upper() != b["addressee"].replace(" ", "").upper():
+        return False
+    slack = BASIS_SLACK_SEC.get(a["heard_at_basis"], 0.0) + BASIS_SLACK_SEC.get(b["heard_at_basis"], 0.0)
+    if abs(a["t"] - b["t"]) <= window + slack:
+        return True
+    for frag, full in ((a, b), (b, a)):
+        dur = full["dur_s"]
+        if (frag["partial"] and not full["partial"] and dur and 0 < dur <= MAX_BROADCAST_SEC
+                and full["t"] - window <= frag["t"] <= full["t"] + dur - window):
+            return True
+    return False
+
+
+# --------------------------------------------------- text alignment and voting
+def edit_distance(a: str, b: str) -> int:
+    """Levenshtein distance in which a wildcard ('.' or '?') in either string matches anything."""
+    if len(a) < len(b):
+        a, b = b, a
+    bw = [y in WILDCARDS for y in b]
+    prev = list(range(len(b) + 1))
+    for i, x in enumerate(a, 1):
+        xw = x in WILDCARDS
+        cur = [i]
+        for j, y in enumerate(b, 1):
+            best = prev[j - 1] + (0 if xw or bw[j - 1] or x == y else 1)
+            if prev[j] + 1 < best:
+                best = prev[j] + 1
+            if cur[j - 1] + 1 < best:
+                best = cur[j - 1] + 1
+            cur.append(best)
+        prev = cur
+    return prev[-1]
+
+
+def text_agreement(a: str, b: str) -> float:
+    """1 - edit distance / longer length: 1.0 = same text, 0.0 = nothing in common or no text."""
+    if not a or not b:
+        return 0.0
+    return 1.0 - edit_distance(a, b) / max(len(a), len(b))
+
+
+def align_into(pivot: str, copy: str) -> list[tuple[int, int]]:
+    """Align ``copy`` inside ``pivot`` and return the (pivot index, copy index) pairs that
+    line up (matches and substitutions). Pivot positions before and after the copy are
+    free, so a fragment can sit anywhere; gaps inside cost 1, and a substitution costs 1
+    unless the characters agree or either is a wildcard."""
+    n, m = len(pivot), len(copy)
+    if not n or not m:
+        return []
+    if pivot == copy:
+        return [(i, i) for i in range(n)]
+    cw = [y in WILDCARDS for y in copy]
+    d = [[0] * (m + 1) for _ in range(n + 1)]   # d[i][j]: copy[:j] placed, ending at pivot[:i]
+    d[0] = list(range(m + 1))
+    for i in range(1, n + 1):
+        x = pivot[i - 1]
+        xw = x in WILDCARDS
+        prev, cur = d[i - 1], d[i]
+        for j in range(1, m + 1):
+            best = prev[j - 1] + (0 if xw or cw[j - 1] or x == copy[j - 1] else 1)
+            if prev[j] + 1 < best:
+                best = prev[j] + 1
+            if cur[j - 1] + 1 < best:
+                best = cur[j - 1] + 1
+            cur[j] = best
+    i = min(range(n + 1), key=lambda k: (d[k][m], k))
+    j, pairs = m, []
+    while i and j:
+        x, y = pivot[i - 1], copy[j - 1]
+        if d[i][j] == d[i - 1][j - 1] + (0 if x in WILDCARDS or cw[j - 1] or x == y else 1):
+            pairs.append((i - 1, j - 1))
+            i, j = i - 1, j - 1
+        elif d[i][j] == d[i][j - 1] + 1:
+            j -= 1
+        else:
+            i -= 1
+    return pairs[::-1]
+
+
+def is_human_copy(r) -> bool:
+    """A person typed, corrected or checked this copy (review app, NEET log, missileer correction)."""
+    return r["review_status"] == "reviewed" or bool(r["corrected"]) or r["origin"] == "manual"
+
+
+def char_weights(r) -> list[float]:
+    """Vote weight of each character: HUMAN_WEIGHT for a person's copy; else the decoder's
+    per-character confidence when it lines up with the text, else the row's confidence."""
+    t = r["text_norm"]
+    if is_human_copy(r):
+        return [HUMAN_WEIGHT] * len(t)
+    base = max(0.01, r["confidence"] if r["confidence"] is not None else NO_CONFIDENCE_WEIGHT)
+    try:
+        cc = json.loads(r["char_confidence"]) if r["char_confidence"] else None
+    except ValueError:
+        cc = None
+    if not isinstance(cc, list) or len(cc) != len(t):
+        return [base] * len(t)
+    return [min(1.0, max(0.01, float(c))) if isinstance(c, (int, float)) else base for c in cc]
+
+
+def cluster_text(copies, fragments=frozenset()) -> tuple[str | None, bool]:
+    """Canonical text of one cluster, and whether a person's copy took part.
+
+    Every copy is aligned to a pivot and votes per position with its character weights.
+    The pivot is a full copy (not ``partial`` and not the shorter side of a partial link):
+    a person's copy if there is one, else the machine copy whose text is most common, then
+    whose length matches the spoken length, then with the highest mean weight. A person's
+    copy outweighs any number of machine copies, so it decides wherever it covers. Each
+    independent transcription votes once: missileer repeats a message's text on every
+    reception, so its rows count once per message."""
+    seen, uniq = set(), []
+    for r in copies:
+        key = (r["external_source"], r["external_id"]) if r["external_source"] and r["external_id"] \
+            else ("row", r["id"])
+        if r["text_norm"] not in NO_TEXT and key not in seen:
+            seen.add(key)
+            uniq.append(r)
+    if not uniq:
+        return None, False
+    weights = [char_weights(r) for r in uniq]
+    full = [k for k, r in enumerate(uniq) if not (r["partial"] or r["id"] in fragments)] \
+        or list(range(len(uniq)))
+    pool = [k for k in full if is_human_copy(uniq[k])] or full
+    counts = Counter(uniq[k]["text_norm"] for k in pool)
+    spoken = Counter(r["announced_length"] for r in uniq if r["announced_length"]).most_common(1)
+    target = spoken[0][0] if spoken else None
+    # with 3+ candidates, the one closest to all the others (fewest edits) is the best frame;
+    # the search is quadratic, so a very large cluster falls back to the next criteria
+    spread = dict.fromkeys(pool, 0)
+    if 3 <= len(pool) <= MAX_SPREAD_COPIES:
+        for x, k in enumerate(pool):
+            for o in pool[x + 1:]:
+                e = edit_distance(uniq[k]["text_norm"], uniq[o]["text_norm"])
+                spread[k] += e
+                spread[o] += e
+
+    def rank(k):
+        t, w = uniq[k]["text_norm"], weights[k]
+        return counts[t], len(t) == target, -spread[k], sum(w) / len(w), -uniq[k]["id"]
+
+    pivot = uniq[max(pool, key=rank)]["text_norm"]
+    tallies = [defaultdict(float) for _ in pivot]
+    gaps = [0.0] * len(pivot)   # weight of copies that span a position but have nothing there
+    for r, w in zip(uniq, weights, strict=True):
+        t = r["text_norm"]
+        pairs = align_into(pivot, t)
+        for i, j in pairs:
+            if t[j] not in WILDCARDS:
+                tallies[i][t[j]] += w[j]
+        if pairs:
+            covered, mean = {i for i, _ in pairs}, sum(w) / len(w)
+            for i in range(pairs[0][0], pairs[-1][0] + 1):
+                if i not in covered:
+                    gaps[i] += mean
     out = []
-    for chars in zip(*[t for t in texts if len(t) == modal], strict=True):
-        known = [c for c in chars if c not in WILDCARDS]
-        out.append(Counter(known).most_common(1)[0][0] if known else ".")
-    return "".join(out)
+    for i, tl in enumerate(tallies):
+        best = max(tl, key=lambda c, tl=tl, i=i: (tl[c], c == pivot[i], c)) if tl else "."
+        if (tl[best] if tl else 0.0) >= gaps[i]:   # else most copies say the pivot inserted it
+            out.append(best)
+    return "".join(out), any(is_human_copy(r) for r in uniq)
+
+
+def vote_check(copies, fragments=frozenset()) -> tuple[float, float] | None:
+    """For a cluster with a person's full copy and machine copies: the character error rate
+    of the machine-only vote against the person's text, and the mean error rate of the
+    single full machine copies. None when there is nothing to compare."""
+    def full(r):
+        return r["text_norm"] not in NO_TEXT and not (r["partial"] or r["id"] in fragments)
+    human = [r["text_norm"] for r in copies if is_human_copy(r) and full(r)]
+    machine = [r for r in copies if not is_human_copy(r) and r["text_norm"] not in NO_TEXT]
+    singles = [r["text_norm"] for r in machine if full(r)]
+    if not human or not singles:
+        return None
+    ref = Counter(human).most_common(1)[0][0]
+    vote, _ = cluster_text(machine, fragments)
+
+    def cer(hyp):   # an unknown character in the person's copy is free; in a machine copy it is wrong
+        return edit_distance(ref, "".join("\0" if c in WILDCARDS else c for c in hyp)) / len(ref)
+    return cer(vote), sum(cer(s) for s in singles) / len(singles)
+
+
+# --------------------------------------------------------------------- link
+def same_airing(kind: str, delta_sec: float, simulcast_sec: float) -> bool:
+    """Whether a link joins two copies of one transmission (for n_airings and coverage):
+    simulcast copies, and a fragment heard within simulcast_sec of its full copy."""
+    return kind == "simulcast" or (kind == "partial" and abs(delta_sec) <= simulcast_sec)
+
+
+def _link_rows(con):
+    """EAM and Skyking copies that link may join (rejected ones never), in time order."""
+    cols = {r[1] for r in con.execute("PRAGMA table_info(messages)")}
+    dur = "m.end_s - m.start_s" if {"start_s", "end_s"} <= cols else "NULL"   # migration 0003
+    return con.execute(
+        f"""SELECT m.id, m.heard_utc, m.text_norm, m.prefix, m.msg_type, m.partial, m.announced_length,
+                   m.addressee, m.heard_at_basis, m.review_status, m.corrected, m.origin, m.confidence,
+                   m.char_confidence, m.external_source, m.external_id,
+                   coalesce(m.frequency_khz, c.frequency_khz) AS frequency_khz, r.code AS receiver,
+                   {dur} AS dur_s, (julianday(m.heard_utc) - 2440587.5) * 86400.0 AS t
+            FROM messages m
+            LEFT JOIN captures c ON c.id = m.capture_id
+            LEFT JOIN receivers r ON r.id = coalesce(m.receiver_id, c.receiver_id)
+            WHERE m.msg_type IN ('EAM','SKYKING') AND m.review_status <> 'rejected'
+            ORDER BY t, m.id""").fetchall()
+
+
+def _where(r) -> str:
+    f = r["frequency_khz"]
+    return f"{r['receiver'] or '?'}@{f:g}" if f else (r["receiver"] or "?")
 
 
 def cmd_link(args) -> int:
@@ -467,9 +694,11 @@ def cmd_link(args) -> int:
     for flag, key in (("simulcast_sec", "link.simulcast_sec"), ("window_hours", "link.window_hours"),
                       ("threshold", "link.threshold"), ("min_known", "link.min_known"),
                       ("similarity", "link.similarity"), ("max_len_diff", "link.max_len_diff"),
-                      ("partial_min_len", "link.partial_min_len")):
+                      ("partial_min_len", "link.partial_min_len"),
+                      ("time_window_sec", "link.time_window_sec")):
         if getattr(args, flag, None) is not None:
             cfg[key] = getattr(args, flag)
+    dry_run = bool(getattr(args, "dry_run", False))
     sim, method = resolve_similarity(cfg["link.similarity"], cfg["link.min_known"])
     simulcast_sec, window_s, threshold = (cfg["link.simulcast_sec"], cfg["link.window_hours"] * 3600,
                                           cfg["link.threshold"])
@@ -477,13 +706,13 @@ def cmd_link(args) -> int:
     # the built-in Hamming score is defined for equal lengths only
     max_len_diff = int(cfg["link.max_len_diff"]) if method == DECODING_METHOD else 0
     partial_min_len = int(cfg["link.partial_min_len"])   # 0 turns partial links off
-    rows = con.execute(
-        """SELECT id, heard_utc, text_norm, prefix, receiver_id, frequency_khz,
-                  (julianday(heard_utc) - 2440587.5) * 86400.0 AS t
-           FROM messages
-           WHERE msg_type IN ('EAM','SKYKING') AND review_status <> 'rejected'
-             AND text_norm NOT IN ('', '_', '%')
-           ORDER BY heard_utc, id""").fetchall()
+    time_window = float(cfg["link.time_window_sec"])     # 0 turns time matching off
+    time_reach = max(time_window + 2 * max(BASIS_SLACK_SEC.values()), MAX_BROADCAST_SEC)
+    rows = _link_rows(con)
+    own = f"confirmed = 0 AND method IN ({', '.join('?' * len(OWN_METHODS))})"   # links rebuilt below
+    # links this run keeps (source-asserted or confirmed): those pairs are not re-linked
+    kept = {(r[0], r[1]) for r in con.execute(
+        f"SELECT message_a, message_b FROM message_links WHERE NOT ({own})", OWN_METHODS)}
     links = []
     j0 = 0
     # rows are in time order, so b is always the earlier copy; ids need not be (backfills,
@@ -491,31 +720,39 @@ def cmd_link(args) -> int:
     for i, a in enumerate(rows):
         while rows[j0]["t"] < a["t"] - window_s:
             j0 += 1
-        la = len(a["text_norm"])
+        at = a["text_norm"]
         for b in rows[j0:i]:
             d = a["t"] - b["t"]
-            lb = len(b["text_norm"])
-            if abs(lb - la) <= max_len_diff and not (
+            bt = b["text_norm"]
+            pair = (b["id"], a["id"]) if b["id"] < a["id"] else (a["id"], b["id"])
+            if pair in kept:
+                continue
+            timed = d <= time_reach and same_emission(a, b, time_window)
+            texts = at not in NO_TEXT and bt not in NO_TEXT
+            s = None
+            if texts and abs(len(bt) - len(at)) <= max_len_diff and not (
                     a["prefix"] and b["prefix"] and "?" not in a["prefix"] + b["prefix"]
                     and a["prefix"] != b["prefix"]):
-                s = sim(b["text_norm"], a["text_norm"])
+                s = sim(bt, at)
+            if s is not None and s >= threshold:
+                kind = "simulcast" if d <= simulcast_sec or timed else "rebroadcast"
+                links.append((*pair, kind, round(d, 1), round(s, 4), method))
+            elif timed:
+                # same transmission by time: the texts may disagree (machine copies often
+                # do), so the stored similarity is only how far they agree, for review
+                links.append((*pair, "simulcast", round(d, 1), round(text_agreement(bt, at), 4),
+                              TIME_METHOD))
+            elif texts and partial_min_len and len(bt) != len(at):
+                # a truncated copy: align the shorter text inside the longer one. No prefix
+                # check here, since a fragment's "prefix" is just its first two characters.
+                s = partial_similarity(bt, at, partial_min_len, cfg["link.min_known"],
+                                       stop_below=threshold)
                 if s is not None and s >= threshold:
-                    kind = "simulcast" if d <= simulcast_sec else "rebroadcast"
-                    links.append((*sorted((b["id"], a["id"])), kind, round(d, 1), round(s, 4), method))
-                    continue
-            # a truncated copy: align the shorter text inside the longer one. No prefix
-            # check here, since a fragment's "prefix" is just its first two characters.
-            if partial_min_len and lb != la:
-                s = partial_similarity(b["text_norm"], a["text_norm"], partial_min_len,
-                                       cfg["link.min_known"], stop_below=threshold)
-                if s is not None and s >= threshold:
-                    links.append((*sorted((b["id"], a["id"])), "partial", round(d, 1), round(s, 4),
-                                  PARTIAL_METHOD))
+                    links.append((*pair, "partial", round(d, 1), round(s, 4), PARTIAL_METHOD))
     # all similarity calls are done before any write, so a failing similarity
     # function leaves the DB untouched. Only our own unconfirmed links are rebuilt;
     # source-asserted ('external:*') and human-confirmed links are kept.
-    con.execute("DELETE FROM message_links WHERE confirmed = 0 AND method IN (?, ?, ?)",
-                (BUILTIN_METHOD, DECODING_METHOD, PARTIAL_METHOD))
+    con.execute(f"DELETE FROM message_links WHERE {own}", OWN_METHODS)
     con.execute("UPDATE messages SET cluster_id = NULL")
     con.execute("DELETE FROM message_clusters")
     con.executemany(
@@ -524,42 +761,144 @@ def cmd_link(args) -> int:
     # clusters from all links (incl. confirmed/manual ones kept from earlier runs)
     info = {r["id"]: r for r in rows}
     dsu, sim_dsu = DSU(), DSU()
-    fragments = set()   # the shorter side of each partial link: kept out of the consensus vote
+    fragments = set()   # the shorter side of each partial link: never the cluster's pivot
     for a, b, kind, d in con.execute(
             "SELECT message_a, message_b, link_kind, delta_sec FROM message_links"):
         dsu.union(a, b)
-        if kind == "simulcast" or (kind == "partial" and abs(d) <= simulcast_sec):
-            sim_dsu.union(a, b)   # a fragment heard with the full copy is the same emission
+        if same_airing(kind, d, simulcast_sec):
+            sim_dsu.union(a, b)
         if kind == "partial" and a in info and b in info:
             fragments.add(min((a, b), key=lambda i: len(info[i]["text_norm"])))
     members = defaultdict(list)
     for mid in list(dsu.p):
         members[dsu.find(mid)].append(mid)
+    by_person, checks = 0, []
     for ids in members.values():
         ids = [i for i in ids if i in info]
         if len(ids) < 2:
             continue
-        ids.sort(key=lambda i: (info[i]["heard_utc"], i))
-        texts = [info[i]["text_norm"] for i in ids if i not in fragments] \
-            or [info[i]["text_norm"] for i in ids]
-        canon = consensus(texts)
-        airings = len({sim_dsu.find(i) for i in ids})
+        ids.sort(key=lambda i: (info[i]["t"], i))
+        copies = [info[i] for i in ids]
+        canon, human = cluster_text(copies, fragments)
+        by_person += human
+        if (check := vote_check(copies, fragments)) is not None:
+            checks.append(check)
+        lead = next((r for r in copies if r["text_norm"] not in NO_TEXT
+                     and not (r["partial"] or r["id"] in fragments)), copies[0])
+        prefix = lead["prefix"]
+        if canon and lead["msg_type"] == "EAM" and not WILDCARDS & set(canon[:2]):
+            prefix = canon[:2]
         cur = con.execute(
             """INSERT INTO message_clusters(canonical_text, prefix, length, first_heard_utc,
                    last_heard_utc, n_messages, n_airings) VALUES (?,?,?,?,?,?,?)""",
-            (canon, info[next((i for i in ids if i not in fragments), ids[0])]["prefix"], len(canon),
-             info[ids[0]]["heard_utc"], info[ids[-1]]["heard_utc"], len(ids), airings))
+            (canon, prefix, len(canon) if canon else None, copies[0]["heard_utc"], copies[-1]["heard_utc"],
+             len(ids), len({sim_dsu.find(i) for i in ids})))
         con.executemany("UPDATE messages SET cluster_id = ? WHERE id = ?",
                         [(cur.lastrowid, i) for i in ids])
-    con.commit()
     kinds = Counter(link[2] for link in links)
+    timed = [link for link in links if link[5] == TIME_METHOD]
     ncl = con.execute("SELECT count(*) FROM message_clusters").fetchone()[0]
     print(f"compared {len(rows)} messages with {method} (max_len_diff {max_len_diff}, "
-          f"simulcast<={simulcast_sec:g}s, "
-          f"window {window_s / 3600:g}h, threshold {threshold:g}): {len(links)} links {dict(kinds)}, "
-          f"{ncl} clusters")
+          f"simulcast<={simulcast_sec:g}s, time window {time_window:g}s, "
+          f"window {window_s / 3600:g}h, threshold {threshold:g}): {len(links)} links {dict(kinds)} "
+          f"({len(timed)} by time), {ncl} clusters ({by_person} with a person's copy)")
+    if checks:
+        print(f"vote check on {len(checks)} cluster(s) with a person's copy: machine vote CER "
+              f"{sum(c[0] for c in checks) / len(checks):.3f} vs single machine copies "
+              f"{sum(c[1] for c in checks) / len(checks):.3f}")
+    if dry_run:
+        con.rollback()
+        show = int(getattr(args, "show", 50) or 0) or len(timed)
+        print(f"dry run: nothing written. Time matches ({len(timed)}):")
+        for a, b, _, d, s, _ in sorted(timed, key=lambda link: (min(info[link[0]]["t"], info[link[1]]["t"]),
+                                                                link[:2]))[:show]:
+            first, second = sorted((info[a], info[b]), key=lambda r: (r["t"], r["id"]))
+            print(f"  {first['heard_utc']}  +{d:g}s  {first['msg_type']}  {_where(first)} | {_where(second)}"
+                  f"  agree {s:.2f}  {first['text_norm'][:16] or '-'} | {second['text_norm'][:16] or '-'}")
+        if len(timed) > show:
+            print(f"  ... and {len(timed) - show} more (--show 0 lists all)")
+    else:
+        con.commit()
     return 0
 
+
+# ----------------------------------------------------------------- coverage
+def cmd_coverage(args) -> int:
+    """Per-airing comparison with an external source: which transmissions both heard, only
+    we heard, or only they heard. Uses the links of the last `link` run."""
+    con = connect(args.db)
+    simulcast_sec = load_settings(con)["link.simulcast_sec"]
+    rows = con.execute(
+        """SELECT m.id, m.heard_utc, m.msg_type, m.external_source, m.text_norm,
+                  coalesce(m.frequency_khz, c.frequency_khz) AS frequency_khz, r.code AS receiver,
+                  mc.canonical_text
+           FROM messages m
+           LEFT JOIN captures c ON c.id = m.capture_id
+           LEFT JOIN receivers r ON r.id = coalesce(m.receiver_id, c.receiver_id)
+           LEFT JOIN message_clusters mc ON mc.id = m.cluster_id
+           WHERE m.msg_type IN ('EAM','SKYKING') AND m.review_status <> 'rejected'
+           ORDER BY m.heard_utc, m.id""").fetchall()
+    info = {r["id"]: r for r in rows}
+    airing = DSU()
+    for a, b, kind, d in con.execute("SELECT message_a, message_b, link_kind, delta_sec FROM message_links"):
+        if a in info and b in info and same_airing(kind, d, simulcast_sec):
+            airing.union(a, b)
+    groups = defaultdict(list)
+    for r in rows:
+        groups[airing.find(r["id"])].append(r)
+
+    def ours(r):
+        return r["external_source"] is None
+
+    def theirs(r):
+        return r["external_source"] == args.source
+
+    our_t = [r["heard_utc"] for r in rows if ours(r)]
+    their_t = [r["heard_utc"] for r in rows if theirs(r)]
+    if not our_t or not their_t:
+        print(f"nothing to compare: {len(our_t)} copies of ours and {len(their_t)} from {args.source}")
+        return 0
+    # whole UTC days on which both sources have copies, unless given
+    lo = f"{args.since or max(min(our_t), min(their_t))[:10]}T00:00:00"
+    hi = f"{args.until or min(max(our_t), max(their_t))[:10]}T99"
+    table, listing = defaultdict(Counter), []
+    for g in groups.values():
+        first = g[0]["heard_utc"]
+        if not lo <= first <= hi:
+            continue
+        us, them = [r for r in g if ours(r)], [r for r in g if theirs(r)]
+        status = "both" if us and them else "ours only" if us else f"{args.source} only" if them else None
+        if status is None:
+            continue
+        table[(first[:10], g[0]["msg_type"])][status] += 1
+        text = next((r["canonical_text"] or r["text_norm"] for r in us + them
+                     if (r["canonical_text"] or r["text_norm"]) not in NO_TEXT), "-")
+        where_us = ", ".join(_where(r) for r in us) or "-"
+        where_them = ", ".join(_where(r) for r in them) or "-"
+        listing.append(f"{first}  {g[0]['msg_type']:<7} {status:<16} {where_us} | {where_them}  {text[:32]}")
+    print(f"coverage vs {args.source}, {lo[:10]} .. {hi[:10]} (UTC days). Counts are airings: copies of "
+          f"one transmission (simulcast and time-matched) count once.")
+    cols = ("both", "ours only", f"{args.source} only")
+    print(f"{'date':<10}  {'type':<7}  {'both':>5}  {'ours only':>9}  {cols[2]:>{len(cols[2])}}  caught")
+    totals = defaultdict(Counter)
+    for (day, mtype), c in sorted(table.items()):
+        totals[mtype].update(c)
+        _coverage_line(day, mtype, c, cols)
+    for mtype, c in sorted(totals.items()):
+        _coverage_line("total", mtype, c, cols)
+    print(f"caught = share of {args.source}'s airings we also heard. \"ours only\" is either an airing "
+          f"{args.source} missed or a false copy of ours.")
+    if args.list:
+        print()
+        print("\n".join(listing))
+    return 0
+
+
+def _coverage_line(day, mtype, c, cols):
+    seen = c[cols[0]] + c[cols[2]]
+    caught = f"{100 * c[cols[0]] / seen:.0f}%" if seen else "-"
+    width = len(cols[2])
+    print(f"{day:<10}  {mtype:<7}  {c[cols[0]]:>5}  {c[cols[1]]:>9}  {c[cols[2]]:>{width}}  {caught:>6}")
 
 
 # ------------------------------------------------------------ missileer.watch
@@ -1123,7 +1462,19 @@ def main(argv=None) -> int:
     s.add_argument("--partial-min-len", type=int,
                    help="default 12 (settings: link.partial_min_len); shortest truncated copy linked "
                         "to a longer one as 'partial'; 0 = off")
+    s.add_argument("--time-window-sec", type=float,
+                   help="default 30 (settings: link.time_window_sec); copies of one type starting this "
+                        "close together are the same transmission whatever their text; 0 = off")
+    s.add_argument("--dry-run", action="store_true",
+                   help="compute and report everything, write nothing; lists the time matches")
+    s.add_argument("--show", type=int, default=50, help="time matches listed by --dry-run (0 = all)")
     s.set_defaults(fn=cmd_link)
+    s = sub.add_parser("coverage", help="per-airing comparison with an external source (run link first)")
+    s.add_argument("--source", default="missileer", help="external_sources code (default missileer)")
+    s.add_argument("--since", help="first UTC day, YYYY-MM-DD (default: when both sources have copies)")
+    s.add_argument("--until", help="last UTC day, YYYY-MM-DD (default: when both sources have copies)")
+    s.add_argument("--list", action="store_true", help="also list every airing")
+    s.set_defaults(fn=cmd_coverage)
     s = sub.add_parser("query", epilog=TOKEN_HELP, formatter_class=argparse.RawDescriptionHelpFormatter)
     s.add_argument("q")
     s.add_argument("--days", action="store_true", help="aggregate per day")
