@@ -50,7 +50,7 @@ checkout, not a fast-forward).
    |---|---|
    | `hfgcs/sources/openwebrx.py` | `hfgcs-8992` (every `hfgcs-<kHz>` unit) |
    | `hfgcs/sources/kiwisdr.py` | every `hfgcs-kiwi-*` |
-   | `hfgcs/dsp.py`, `hfgcs/capture.py`, `hfgcs/config.py`, `hfgcs/runstate.py`, `hfgcs/sources/base.py`, `hfgcs/sources/__init__.py`, `hfgcs_scanner.py` | all recorders |
+   | `hfgcs/dsp.py`, `hfgcs/capture.py`, `hfgcs/config.py`, `hfgcs/runstate.py`, `hfgcs/shadow.py`, `hfgcs/sources/base.py`, `hfgcs/sources/__init__.py`, `hfgcs_scanner.py` | all recorders |
    | `hfgcs/review_app.py`, `hfgcs/review_db.py`, `hfgcs/db_migrations.py`, `migrations/*` | `hfgcs-review` |
    | `hfgcs/static_site.py`, `public_site/*` | `hfgcs-public` |
    | `decoding/*` | `hfgcs-decode` only (the recorders never import `decoding/`) |
@@ -58,7 +58,7 @@ checkout, not a fast-forward).
    | `hfgcs/__init__.py`, core dependency changes in `pyproject.toml` | everything |
    | an optional extra in `pyproject.toml` | the units that use it (step 2) |
    | `deploy/systemd/<unit>.service` | that unit: the installed copy in `~/.config/systemd/user/` is replaced (old one kept as `.bak-<UTC>`), then `daemon-reload` and a restart. Units that are not installed are never installed or started. `hfgcs-decode-backfill` (one-shot) is installed but never started. |
-   | anything else: docs, tests, `scripts/` (incl. `hfgcs_db.py`, which the decode worker runs as a fresh subprocess per load), `deploy/env/*`, the deploy tool itself | nothing |
+   | anything else: docs, tests, `scripts/` (incl. `hfgcs_db.py`, which the decode worker runs as a fresh subprocess per load), report tools such as `hfgcs/shadow_score.py`, `deploy/env/*`, the deploy tool itself | nothing |
 
    Units are found with `systemctl --user list-unit-files 'hfgcs-*'` and classified by name. Restarts left
    over from an earlier run (deferred or skipped) are added; they live in

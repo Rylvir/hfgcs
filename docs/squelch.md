@@ -74,19 +74,39 @@ v1 keeps its old levels, so shadow mode compares the old system with the new one
   `start_utc` (activity start), `end_utc`, `duration_sec`, `close_reason` (`hang`, `stuck`, `cap`, or
   `flush` when the stream ended or was retuned), `snr_db_peak`, `snr_db_mean` and `noise_floor_db`.
   No audio is kept.
-- Compare it with what was recorded:
+- Compare the captures each squelch made:
 
   ```bash
-  python -m hfgcs.shadow --catalog data/hfgcs_catalog.jsonl --since 2026-10-30 --list
+  python -m hfgcs.shadow --catalog hfgcs_catalog.jsonl --since 2026-10-30 --list
   ```
 
   It reports, per receiver and channel, the captures and minutes each squelch made. It also lists
-  **live only** captures (recorded now, but v2 would have skipped them: noise, or a miss?) and **shadow
-  only** ones (v2 would have recorded them and v1 did not). The decoded EAMs and
-  `hfgcs_db.py coverage` against missileer.watch show which side was right. So does listening, for
-  live-only captures.
-- To switch, set `squelch = "v2"` (and `squelch_shadow = "v1"` to keep comparing) and restart the
-  recorders.
+  **live only** captures (recorded now, but v2 would have skipped them) and **shadow only** ones (v2
+  would have recorded them and v1 did not).
+- Score v2 against what the decoder found in the live recordings:
+
+  ```bash
+  python -m hfgcs.shadow_score --catalog hfgcs_catalog.jsonl --db data/hfgcs.db \
+      --since 2026-10-30T18:00Z --list
+  ```
+
+  - For each message the decoder found (and nobody rejected), it checks whether v2's captures would
+    have held it: **kept** (all of it in one capture), **split** (all of it, over several), **cut**
+    (only part) or **missed**. A v2 capture is taken to start `preroll_seconds` before its activity,
+    like a live one, and 2 s at the edges are allowed for timing.
+  - Machine decodes below `--min-confidence` (0.5) are listed but not scored, because noise the
+    decoder misread as speech is what v2 should skip. Messages a person checked always count.
+  - It splits the live minutes by what the decoder made of each recording (a message, voice without
+    one, no voice, not decoded yet) and shows how many of them v2 would have recorded. Telling the last
+    three apart needs the decode worker's state file, found at the worker's default place or given with
+    `--decode-state`.
+  - Set `--since` to the time the recorders restarted with shadow mode. Without it the window starts
+    at the first shadow capture, and a message from before a channel's first one is flagged.
+  - `--list` gives the file and offset of each message v2 would not have kept, and of each recording
+    with voice that v2 would have skipped entirely, so you can listen to them.
+  - It opens the database read-only. The recorders don't import it, so changing it restarts nothing.
+- To switch, check that v2 kept the EAMs and Skykings (listen to any it did not), then set
+  `squelch = "v2"` (and `squelch_shadow = "v1"` to keep comparing) and restart the recorders.
 - **Limitation:** when one radio scans several channels, a shadow capture is cut at each retune
   (`flush`), because only the live squelch keeps the dwell going. The deployed recorders are single
   channel.

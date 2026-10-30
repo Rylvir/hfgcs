@@ -59,6 +59,7 @@ PATH_RULES: list[tuple[str, frozenset[str]]] = [
     ("hfgcs/capture.py", RECORDERS),  # squelch/recording pipeline
     ("hfgcs/runstate.py", RECORDERS),
     ("hfgcs/config.py", RECORDERS),
+    ("hfgcs/shadow.py", RECORDERS),  # the recorders write the shadow squelch log with it
     ("hfgcs_scanner.py", RECORDERS),
     ("hfgcs/review_app.py", frozenset({REVIEW})),
     ("hfgcs/review_db.py", frozenset({REVIEW})),
