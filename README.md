@@ -96,8 +96,9 @@ Each recording is a 16-bit WAV in `recordings/` plus one JSON line in
   receiver's own level where there is one (KiwiSDR RSSI, OpenWebRX S-meter), opens on
   words with pauses, ignores dropouts and static crashes, and closes a capture whose
   level has gone flat. By default v1 records and v2 runs in shadow mode, logging what
-  it would have recorded (`python -m hfgcs.shadow` compares them). The audio from the
-  activity window and `preroll_seconds` before it are kept.
+  it would have recorded (`python -m hfgcs.shadow` compares them, and
+  `python -m hfgcs.shadow_score` checks v2 against the messages the decoder found). The
+  audio from the activity window and `preroll_seconds` before it are kept.
 - Tuner AGC is off by default (`tuner_agc`) so dB thresholds are stable.
 
 ## Next improvements (easy to add)
