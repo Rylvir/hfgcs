@@ -440,3 +440,53 @@ def test_mid_start_kind_helper_edge_cases():
     assert mid_message_start_kind({"type": "eam", "body": "", "flags": []}) is None
     split = {"type": "eam", "body": "ABCDEF", "flags": ["missing_message_follows", "reads_split_inferred"]}
     assert mid_message_start_kind(split) == "in_read1"
+
+
+# ---- callsigns stop at procedure words (regression: 'FAKECALL RADIO CHECK')
+@pytest.mark.parametrize(
+    "text,callsign",
+    [
+        (
+            "This is FAKECALL radio check test count one two three three two one this is FAKECALL out",
+            "FAKECALL",
+        ),
+        ("This is Fakecall, radio check, test count one two three, out", "FAKECALL"),
+        ("This is Fake Call radio-check, test count one two, over", "FAKE CALL"),
+        ("This is Elmendorf in the blind test count one two three. Elmendorf out.", "ELMENDORF"),
+        ("This is Red Dog, test count one two three, this is Red Dog over", "RED DOG"),
+        ("This is Offutt testing, test count one two three, out", "OFFUTT"),
+        ("This is Andrews how copy, test count one two three, out", "ANDREWS"),
+    ],
+)
+def test_radio_check_callsign_stops_at_procedure_words(text, callsign):
+    (r,) = parse_transcript(text)
+    assert r["type"] == "radio_check"
+    assert r["callsign"] == callsign
+    assert [c["callsign"] for c in r["callsigns_all"]] == [callsign]
+
+
+def test_eam_callsigns_stop_at_procedure_words():
+    text = eam().replace("this is Mainsail", "this is Mainsail break", 1)
+    r = parse_eam(text)
+    assert r["opening_callsign"] == "MAINSAIL" and r["callsign"] == "MAINSAIL"
+    r = parse_eam(eam(addressee="Red Dog").replace("For Red Dog", "For Red Dog over", 1))
+    assert r["addressee"] == "RED DOG"
+
+
+def test_skyking_word_in_mid_message_eam_start():
+    """eam-8c26a8bf: a clip that starts mid-EAM, heard by ASR as "Skyking, Mike.
+    Sierra ...", closing with "This concludes message of 32 characters". A Skyking
+    never says "message", so this is a (partial) EAM, not a Skyking."""
+    text = (
+        "Skyking, Mike. Sierra. Yankee Zulu, Mike. Delta Delta Sierra. I say again. Delta Whiskey "
+        "Delta Quebec Uniform Yankee Juliet Charlie Mike Sierra. This concludes message of 32 characters. "
+        "This is Plan Shot out."
+    )
+    (rec,) = parse_transcript(tokenize(text))
+    assert rec["type"] == "eam"
+    assert "skyking_word_in_eam" in rec["flags"] and "partial_start" in rec["flags"]
+
+
+def test_real_skyking_still_skyking():
+    text = "Skyking, Skyking, do not answer. Redwood. Time four five. Authentication Alpha Bravo. I say again"
+    assert parse_transcript(tokenize(text))[0]["type"] == "skyking"

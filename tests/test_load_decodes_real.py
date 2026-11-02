@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import sqlite3
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -75,10 +76,14 @@ def test_real_sample_document(tool, db, tmp_path):
         assert m["callsign"] == b["callsign"] and m["message_text"] == b["body"]
         assert m["decoder_version"] == doc["decoder_version"] and m["decoded_utc"] == doc["decoded_at"]
         assert m["asr_model"] == doc["asr"]["model"] and m["review_status"] == "needs_review"
-    assert [m["start_s"] for m in msgs] == [0.0, 204.52]
-    assert msgs[0]["callsign"] == "CUPWAY" and msgs[1]["callsign"] is None
-    assert msgs[0]["partial"] == 1 and msgs[1]["partial"] == 0          # partial_start flag
-    assert msgs[1]["heard_utc"] == "2026-09-23T17:36:17.520Z"           # file_start_utc + 204.52 s
+    # Expected values come from the sample itself, so a regenerated fixture still checks the mapping.
+    bs = doc["broadcasts"]
+    assert [m["start_s"] for m in msgs] == [b["start_s"] for b in bs]
+    assert [m["callsign"] for m in msgs] == [b["callsign"] for b in bs]
+    assert [m["partial"] for m in msgs] == [int("partial_start" in b["flags"]) for b in bs]
+    t0 = datetime.fromisoformat(doc["recording"]["file_start_utc"].replace("Z", "+00:00"))
+    heard = t0 + timedelta(seconds=bs[1]["start_s"])
+    assert msgs[1]["heard_utc"] == heard.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     cap = rows(db, "SELECT * FROM captures")[0]
     assert cap["audio_sha256"] == doc["recording"]["sha256"] and cap["audio_path"] == doc["recording"]["file"]
     before = dump(db)
