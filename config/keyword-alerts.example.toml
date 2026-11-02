@@ -1,0 +1,84 @@
+# Copy to ~/.config/hfgcs/keyword-alerts.toml and edit.
+# Used by: python -m hfgcs.keyword_alerts --watch | --dry-run
+# Env overrides: NTFY_SERVER, NTFY_TOPIC, NTFY_TOKEN, HFGCS_REVIEW_URL, HFGCS_RECORDINGS
+
+enabled = true
+pad_s = 12.0          # seconds of audio before/after the matched broadcast
+dedupe_s = 120.0      # merge simulcasts of the same text within this window
+min_word_prob = 0.35  # ASR word probability floor when broadcast confidence is 0
+# review_base_url = "http://192.168.2.214:8090"
+# attach_max_bytes = 2097152   # ntfy.sh public limit is 2 MiB
+
+# Bomber callsigns that are also common English (doom/rogue/skull) set
+# require_callsign_context = true so "doom" in prose does not alert; they need
+# nearby digits ("DOOM 12") or procedure words ("this is DOOM", "DOOM radio check").
+
+[[keywords]]
+name = "skyking"
+patterns = ["skyking", "sky king", "sky kin", "skyking skyking do not answer"]
+min_confidence = 0.25
+priority = "5"
+tags = "warning,loud"
+
+[[keywords]]
+name = "skymaster"
+patterns = ["skymaster", "sky master"]
+priority = "5"
+tags = "warning"
+
+[[keywords]]
+name = "skybird"
+patterns = ["skybird", "sky bird"]
+priority = "5"
+tags = "warning"
+
+[[keywords]]
+name = "nightwatch"
+patterns = ["nightwatch", "night watch", "/night\\s*watch\\s*0?[1-4](\\s*(lima|charlie))?/", "NW1", "NW2", "NW3", "NW4"]
+priority = "5"
+tags = "airplane"
+
+[[keywords]]
+name = "gordo"
+patterns = ["/gordo\\s*\\d{1,2}/", "gordo"]
+require_callsign_context = true
+priority = "5"
+tags = "rotating_light"
+
+[[keywords]]
+name = "doom"
+patterns = ["doom"]
+require_callsign_context = true
+tags = "airplane"
+
+[[keywords]]
+name = "rogue"
+patterns = ["rogue"]
+require_callsign_context = true
+tags = "airplane"
+
+[[keywords]]
+name = "skull"
+patterns = ["skull"]
+require_callsign_context = true
+tags = "airplane"
+
+[[keywords]]
+name = "baffy"
+patterns = ["baffy"]
+tags = "airplane"
+
+[[keywords]]
+name = "panga"
+patterns = ["panga"]
+tags = "airplane"
+
+[[keywords]]
+name = "pyrex"
+patterns = ["pyrex"]
+tags = "airplane"
+
+[[keywords]]
+name = "zolar"
+patterns = ["zolar"]
+tags = "airplane"

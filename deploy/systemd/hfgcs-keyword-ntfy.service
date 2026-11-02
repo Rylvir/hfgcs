@@ -1,0 +1,22 @@
+[Unit]
+Description=HFGCS keyword alerts to ntfy (audio clip attached; replaces hfgcs-skyking-ntfy)
+Documentation=file://%h/hfgcs-app/docs/keyword-alerts.md
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/hfgcs-app
+Environment=PYTHONUNBUFFERED=1
+Environment=HFGCS_DECODES=%h/hfgcs-app/decodes.jsonl
+Environment=HFGCS_RECORDINGS=%h/hfgcs-app/recordings
+Environment=HFGCS_KEYWORD_ALERTS=%h/.config/hfgcs/keyword-alerts.toml
+# NTFY_SERVER / NTFY_TOPIC / optional NTFY_TOKEN — never commit these.
+EnvironmentFile=-%h/.config/hfgcs/ntfy-skyking.env
+EnvironmentFile=-%h/.config/hfgcs/ntfy-keyword.env
+ExecStart=%h/hfgcs-app/deploy/bin/hfgcs-python -m hfgcs.keyword_alerts --watch
+Restart=on-failure
+RestartSec=15
+Nice=10
+
+[Install]
+WantedBy=default.target

@@ -131,3 +131,5 @@ with `hfgcs-8992` last. `deploy/deploy.sh --dry-run` shows the plan. See [docs/d
 MIT, see [LICENSE](LICENSE). If Apache-2.0 code (for example from
 Chipensaw/HFGCS-Monitor-KiwiSDR) is reused later, it keeps its original
 license header and NOTICE alongside it.
+
+- **Keyword ntfy alerts** (`docs/keyword-alerts.md`): watch Skyking/Skybird/Nightwatch/bomber callsigns and push a clip to ntfy.

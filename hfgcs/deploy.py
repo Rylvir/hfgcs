@@ -41,9 +41,10 @@ DECODE = "decode"  # hfgcs-decode: the long-running decode worker (python -m dec
 # hfgcs-decode-backfill: a one-shot run started by hand. A deploy installs its changed unit file
 # but never starts it (a restart would launch a whole backfill).
 ONESHOT = "oneshot"
+ALERT = "alert"  # hfgcs-keyword-ntfy: tails decodes.jsonl, posts ntfy with audio
 RECORDERS = frozenset({OPENWEBRX, KIWI})
 WEB = frozenset({REVIEW, PUBLIC})
-ALL_ROLES = RECORDERS | WEB | {DECODE}
+ALL_ROLES = RECORDERS | WEB | {DECODE, ALERT}
 
 # Changed path (fnmatch pattern, repo-relative) -> roles whose units must restart.
 # First match wins. Anything that matches nothing (docs, tests, scripts/, the deploy tool
@@ -68,7 +69,8 @@ PATH_RULES: list[tuple[str, frozenset[str]]] = [
     ("hfgcs/static_site.py", frozenset({PUBLIC})),
     ("public_site/*", frozenset({PUBLIC})),
     ("decoding/*", frozenset({DECODE})),
-    ("deploy/bin/hfgcs-python", WEB | {DECODE}),  # ExecStart wrapper of the web and decode units
+    ("hfgcs/keyword_alerts.py", frozenset({ALERT})),
+    ("deploy/bin/hfgcs-python", WEB | {DECODE, ALERT}),
     ("hfgcs/__init__.py", ALL_ROLES),
 ]
 UNIT_FILE_DIR = "deploy/systemd/"
@@ -87,6 +89,8 @@ def role_of(unit: str) -> str | None:
         return DECODE
     if unit == "hfgcs-decode-backfill":
         return ONESHOT
+    if unit == "hfgcs-keyword-ntfy":
+        return ALERT
     if unit.startswith("hfgcs-kiwi-"):
         return KIWI
     if re.fullmatch(r"hfgcs-\d+(\.\d+)?", unit):
@@ -110,7 +114,7 @@ def unit_file_unit(path: str) -> str | None:
 
 def order_key(unit: str) -> tuple:
     """Web units first, then the decode worker, then Kiwi units one by one, OpenWebRX (hfgcs-8992) last."""
-    rank = {REVIEW: 0, PUBLIC: 1, DECODE: 2, ONESHOT: 2, None: 2, KIWI: 3, OPENWEBRX: 4}[role_of(unit)]
+    rank = {REVIEW: 0, PUBLIC: 1, DECODE: 2, ALERT: 2, ONESHOT: 2, None: 2, KIWI: 3, OPENWEBRX: 4}[role_of(unit)]
     return (rank, unit)
 
 
