@@ -6,6 +6,7 @@ After=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h/hfgcs-app
+Environment=HFGCS_PYTHON=%h/hfgcs-app/.venv/bin/python
 Environment=PYTHONUNBUFFERED=1
 Environment=HFGCS_DECODES=%h/hfgcs-app/decodes.jsonl
 Environment=HFGCS_RECORDINGS=%h/hfgcs-app/recordings
