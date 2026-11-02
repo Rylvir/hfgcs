@@ -285,6 +285,18 @@ def find_matches(doc: dict, cfg: AlertConfig) -> list[Match]:
         start_s, end_s, word_prob = _word_times(doc, b)
         if _is_prompt_hallucination(doc, b, word_prob, cfg.min_word_prob):
             continue
+        # Proposed Skyking gate (decoding.hallucination): require a short codeword,
+        # and either confidence or agreement. Routine traffic is never alerted.
+        if str(b.get("type") or "") == "skyking" or "skyking" in _norm_text(transcript)[:40]:
+            from decoding.hallucination import is_routine_traffic, skyking_alert_ok
+
+            if is_routine_traffic(b):
+                continue
+            ok, _reason = skyking_alert_ok(b, min_confidence=DEFAULT_MIN_CONF)
+            # Keep legacy keyword matching for non-skyking keywords; for the
+            # skyking keyword itself, only proceed when the gate says alert.
+            b = dict(b)
+            b["_skyking_gate_ok"] = ok
         norm = _norm_text(transcript)
         for kw in cfg.keywords:
             if conf < kw.min_confidence and conf != 0:
@@ -294,6 +306,8 @@ def find_matches(doc: dict, cfg: AlertConfig) -> list[Match]:
             elif conf < kw.min_confidence:
                 if word_prob < max(kw.min_confidence, cfg.min_word_prob):
                     continue
+            if kw.name == "skyking" and b.get("_skyking_gate_ok") is False:
+                continue
             for pat in kw.patterns:
                 m = pat.search(norm)
                 if not m:
