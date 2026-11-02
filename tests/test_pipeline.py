@@ -42,37 +42,38 @@ class FakeAsr:
 def test_default_config_has_second_pass_on_and_preamble_fusion_off():
     c = DecodeConfig()
     assert c.second_pass and c.second_pass_threshold == 0.3 and not c.preamble_fusion and c.snap
-    assert c.asr.vad_filter is False and c.asr.condition_on_previous_text is True
+    assert c.asr.vad_filter is False and c.asr.condition_on_previous_text is False
+    assert c.asr.prompt is None
 
 
 def test_second_pass_fires_on_low_agreement_and_votes():
     asr = FakeAsr(
         {
-            (False, True): _eam("ABCDEFGHIJXL", "ZZZZZZZZZZZZ"),  # reads disagree -> low agreement
-            (False, False): _eam(TRUE, TRUE),
+            (False, False): _eam("ABCDEFGHIJXL", "ZZZZZZZZZZZZ"),  # first = production default
+            (False, True): _eam(TRUE, TRUE),
             (True, False): _eam(TRUE, TRUE),
         }
     )
     out = Decoder(transcribe=asr).decode("clip.opus")
     rec = [r for r in out["records"] if r["type"] == "eam"][0]
     assert out["second_pass"]["fired"] and out["second_pass"]["passes"] == 3
-    assert asr.calls == [(False, True), (False, False), (True, False)]
+    assert asr.calls == [(False, False), (False, True), (True, False)]
     assert "second_pass_vote" in rec["flags"] and "body_first_pass" in rec
     assert rec["body"] == TRUE and rec["body_first_pass"] != TRUE
 
 
 def test_second_pass_skipped_when_reads_agree_or_disabled():
-    agree = {(False, True): _eam(TRUE, TRUE)}
+    agree = {(False, False): _eam(TRUE, TRUE)}
     asr = FakeAsr(agree)
     out = Decoder(transcribe=asr).decode("clip.opus")
-    assert not out["second_pass"]["fired"] and asr.calls == [(False, True)]
-    asr = FakeAsr({(False, True): _eam(TRUE, "ZZZZZZZZZZZZ")})
+    assert not out["second_pass"]["fired"] and asr.calls == [(False, False)]
+    asr = FakeAsr({(False, False): _eam(TRUE, "ZZZZZZZZZZZZ")})
     out = Decoder(DecodeConfig(second_pass=False), transcribe=asr).decode("clip.opus")
-    assert not out["second_pass"]["fired"] and asr.calls == [(False, True)]
+    assert not out["second_pass"]["fired"] and asr.calls == [(False, False)]
 
 
 def test_no_eam_never_triggers_second_pass():
-    asr = FakeAsr({(False, True): "Mainsail radio check, how copy, over."})
+    asr = FakeAsr({(False, False): "Mainsail radio check, how copy, over."})
     out = Decoder(transcribe=asr).decode("clip.opus")
     assert not out["second_pass"]["fired"] and len(asr.calls) == 1
 

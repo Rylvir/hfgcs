@@ -64,7 +64,7 @@ def test_doom_requires_context(tmp_path):
     _wav(tmp_path / "clip.wav")
     prose = _doc("The sense of doom hung over the valley.")
     assert ka.find_matches(prose, cfg) == []
-    callsign = _doc("This is Doom one two, radio check.")
+    callsign = _doc("This is Doom one two. Out.")
     assert any(m.keyword == "doom" for m in ka.find_matches(callsign, cfg))
 
 
@@ -92,7 +92,7 @@ def test_no_alert_without_wav(tmp_path):
 def test_alert_with_clip(tmp_path):
     cfg = ka.AlertConfig(keywords=ka.default_keywords(), recordings_root=tmp_path, pad_s=0.5)
     _wav(tmp_path / "clip.wav", seconds=5.0)
-    doc = _doc("Nightwatch zero one, radio check.", conf=0.9, start_s=1.0, end_s=2.5)
+    doc = _doc("Nightwatch zero one, this is Nightwatch.", conf=0.9, start_s=1.0, end_s=2.5)
     alert = ka.alert_from_doc(doc, cfg)
     assert alert is not None and any(m.keyword == "nightwatch" for m in alert.matches)
     clip, name, hint = ka.build_clip(alert, cfg)
@@ -136,3 +136,30 @@ def test_deploy_mapping():
     assert [p.unit for p in plans] == ["hfgcs-keyword-ntfy"]
     plans, _ = plan_units(["deploy/systemd/hfgcs-keyword-ntfy.service"], units)
     assert [p.unit for p in plans] == ["hfgcs-keyword-ntfy"]
+
+
+def test_eam_never_alerts(tmp_path):
+    """EAMs are log-only: even a high-confidence EAM with a bomber callsign does not ntfy."""
+    cfg = ka.AlertConfig(keywords=ka.default_keywords(), recordings_root=tmp_path)
+    _wav(tmp_path / "clip.wav")
+    doc = _doc(
+        "All stations this is Doom one two. Message follows. Alpha Bravo.",
+        btype="eam",
+        conf=0.9,
+    )
+    assert ka.find_matches(doc, cfg) == []
+    assert ka.alert_from_doc(doc, cfg) is None
+
+
+def test_suppressed_skyking_echo_does_not_alert(tmp_path):
+    cfg = ka.AlertConfig(keywords=ka.default_keywords(), recordings_root=tmp_path)
+    _wav(tmp_path / "clip.wav")
+    doc = _doc(
+        "Skyking, Skyking, do not answer.",
+        btype="skyking",
+        conf=0.0,
+        word_prob=0.9,
+        flags=["missing_codeword", "missing_time", "missing_authentication"],
+    )
+    doc["broadcasts"][0]["codeword"] = {"value": ""}
+    assert ka.find_matches(doc, cfg) == []

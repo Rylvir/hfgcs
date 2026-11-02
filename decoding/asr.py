@@ -134,7 +134,7 @@ class AsrConfig:
     )
     # On since the eval (silver 0.60 -> 0.42 with VAD off); the loops it causes on long reads are removed
     # by tokens.drop_repetition_loops before parsing.
-    condition_on_previous_text: bool = True
+    condition_on_previous_text: bool = False
     temperature: tuple = (0.0, 0.2, 0.4)
     compression_ratio_threshold: Optional[float] = 2.4
     log_prob_threshold: Optional[float] = -1.0
@@ -142,7 +142,7 @@ class AsrConfig:
     hallucination_silence_threshold: Optional[float] = 2.0
     repetition_penalty: float = 1.0
     no_repeat_ngram_size: int = 0
-    prompt: Optional[str] = "eam"  # "eam" | "phonetic" | None | literal text
+    prompt: Optional[str] = None  # None | "eam" | "phonetic" | "phonetic_only" | literal text
     hotwords: bool = True
     preprocess: str = "bp_norm"
     # Chunked mode: run silero VAD ourselves, merge speech into windows of at

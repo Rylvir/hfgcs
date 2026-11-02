@@ -33,19 +33,19 @@ _VAD_DEFAULT = {
 }
 _NOSKIP = {"log_prob_threshold": None, "no_speech_threshold": None, "compression_ratio_threshold": None}
 
-_BEST = {"vad_filter": False, "condition_on_previous_text": True, "post_snap": True}
+_BEST = {"vad_filter": False, "condition_on_previous_text": False, "post_snap": True}
 
 CONFIGS: dict[str, dict] = {
     # Overrides are relative to the v0.1 smoke-test defaults (VAD on, see
     # V01_BASE) so every row in the docs table keeps its cache key.
     "baseline": {},  # v0.1 defaults from the first smoke test
     # = AsrConfig() + snap_words, single pass (first pass of the default "best_vote")
-    "best": {"vad_filter": False, "condition_on_previous_text": True, "post_snap": True},
+    "best": {"vad_filter": False, "condition_on_previous_text": False, "post_snap": True},
     # best + second pass: 3-way character vote on low-agreement EAMs
     # (= pipeline.DecodeConfig(), the production default since 2026-10-26)
     "best_vote": {
         "vad_filter": False,
-        "condition_on_previous_text": True,
+        "condition_on_previous_text": False,
         "post_snap": True,
         "post_vote": list(SECOND_PASS_CONFIGS),
     },
@@ -55,7 +55,7 @@ CONFIGS: dict[str, dict] = {
     "default": {**_BEST, "post_vote": list(SECOND_PASS_CONFIGS)},  # alias of best_vote
     "best_vote_always": {
         "vad_filter": False,
-        "condition_on_previous_text": True,
+        "condition_on_previous_text": False,
         "post_snap": True,
         "post_vote": list(SECOND_PASS_CONFIGS),
         "post_vote_threshold": 1.01,

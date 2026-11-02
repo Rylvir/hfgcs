@@ -1,10 +1,9 @@
 """Post-decode filters for Whisper prompt echoes that look like Skykings.
 
-Live 0.3.3 writes its initial_prompt ("Skyking, Skyking, do not answer.") back
-over noise, often at conf 0.0 with no codeword/time/authentication. A false
-Skyking alert is the worst failure. These helpers are pure and optional: the
-experiment harness and the proposed alert path call them; the live pipeline
-does not until a PR lands.
+Whisper used to write its initial_prompt ("Skyking, Skyking, do not answer.")
+back over noise, often at conf 0.0 with no codeword/time/authentication. A
+false Skyking alert is the worst failure. ``Decoder.decode`` and
+``hfgcs.keyword_alerts.find_matches`` both call these helpers (0.3.4+).
 """
 
 from __future__ import annotations

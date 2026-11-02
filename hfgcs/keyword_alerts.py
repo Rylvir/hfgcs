@@ -276,26 +276,34 @@ def _is_prompt_hallucination(doc: dict, broadcast: dict, word_prob: float, min_w
 
 
 def find_matches(doc: dict, cfg: AlertConfig) -> list[Match]:
+    """Match keywords against broadcasts. EAMs are never alerted (log-only for now).
+    Weak Skykings are suppressed the same way as in ``Decoder.decode`` so older
+    sidecars (pre-0.3.4) do not page on prompt echoes. Routine traffic never alerts."""
+    from decoding.hallucination import (
+        filter_records,
+        is_routine_traffic,
+        skyking_alert_ok,
+    )
+
     out: list[Match] = []
-    for b in doc.get("broadcasts") or []:
+    for b in filter_records(doc.get("broadcasts") or [], suppress=True):
         transcript = b.get("transcript") or ""
         if not transcript.strip():
+            continue
+        # EAMs: log only — no ntfy (Monitoring 2026-11-02). Bomber-callsign keywords
+        # on an EAM transcript are also suppressed until EAM alerts are re-enabled.
+        if str(b.get("type") or "") == "eam":
+            continue
+        if is_routine_traffic(b):
             continue
         conf = float(b.get("confidence") or 0)
         start_s, end_s, word_prob = _word_times(doc, b)
         if _is_prompt_hallucination(doc, b, word_prob, cfg.min_word_prob):
             continue
-        # Proposed Skyking gate (decoding.hallucination): require a short codeword,
-        # and either confidence or agreement. Routine traffic is never alerted.
+        b = dict(b)
+        b["_skyking_gate_ok"] = True
         if str(b.get("type") or "") == "skyking" or "skyking" in _norm_text(transcript)[:40]:
-            from decoding.hallucination import is_routine_traffic, skyking_alert_ok
-
-            if is_routine_traffic(b):
-                continue
             ok, _reason = skyking_alert_ok(b, min_confidence=DEFAULT_MIN_CONF)
-            # Keep legacy keyword matching for non-skyking keywords; for the
-            # skyking keyword itself, only proceed when the gate says alert.
-            b = dict(b)
             b["_skyking_gate_ok"] = ok
         norm = _norm_text(transcript)
         for kw in cfg.keywords:

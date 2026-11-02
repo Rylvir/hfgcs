@@ -78,22 +78,22 @@ On every no-hotword / no-prompt variant the clip is **routine traffic**, not a S
 Live int8: `skyking @ 45.94` with a **long** “codeword” (whole body) and missing time/auth — would fail the proposed gate.  
 0.3.3 float32 (all variants): message kept as **EAM** with “Bravo Force” / phonetic groups intact; **not** `type=skyking`. A Skyking-only alert would miss it; a content keyword (or exercise list) would still catch it.
 
-## Recommended decode config
+## Production defaults (decoding 0.3.4)
+
+Shipped after Monitoring approval. `AsrConfig()` / `DecodeConfig()` / `decoding.worker` now use:
 
 ```text
-AsrConfig(
-  prompt="phonetic_only",   # new: alphabet only, no Skyking preamble
-  hotwords=True,            # NATO + Mainsail + day callsigns; Skyking omitted when prompt is phonetic_only / None
-  condition_on_previous_text=False,
-  # keep float32, windows, max_rtf, gap_repair from 0.3.3
-)
+prompt = None
+condition_on_previous_text = False
+hotwords = True   # NATO + Mainsail + day callsigns; Skyking is omitted when prompt is None
 ```
 
-Plus always run `filter_records(..., suppress=True)` (or the equivalent parser change from a90c95c) before alerts.
+`Decoder.decode` always runs `filter_records(suppress=True)` before writing the document.
+`hfgcs.keyword_alerts` applies the same suppress for older sidecars, runs `skyking_alert_ok`,
+skips routine traffic, and **never ntfy-alerts on `type==eam`** (log only until re-enabled).
 
-**Why not v0+suppress only?** Suppress removes phantoms but leaves alert-clip RTF ~1.0 and still spends CPU on prompt echoes. **v2 (noprompt)** removes the seed, is ~5–8× cheaper on alert clips and ~3.5× on gold, at ~0.13 worse gold CER on the 6-EAM slice. **phonetic_only** is the middle ground (gold CER 0.626, RTF 0.63, no phantoms).
-
-**User decision:** Bravo Force is currently an EAM on 0.3.3. Either (a) accept Skyking alerts only for clean short-codeword Skykings and add a separate keyword for exercise names like “Bravo Force”, or (b) invest in better Skyking vs EAM classification without re-seeding the preamble.
+Tradeoff vs the old eam-prompt seed (experiment table above): ~0.13 worse gold CER on a
+6-EAM slice, ~3.5× faster, no conf-0 Skyking phantoms on the false-alert set.
 
 ## Proposed alert rule (fits #27)
 
@@ -140,3 +140,22 @@ Artifacts: `/workspace/skyking-exp/gold/{live,noprompt,phonetic_only}_summary.js
 2. Should “Bravo Force” / other exercise names be a separate keyword while Skyking stays strict?  
 3. Prefer `phonetic_only` (keeps alphabet bias) or full `prompt=None`?  
 4. OK to land suppress + alert gate without waiting for the full 0.3.7 ASR wall-time/voice-gate stack?
+
+## Deploy plan (hilltop)
+
+Restart **only** the decode worker and the keyword alerter. Do **not** restart recorders,
+OpenWebRX, or the review app.
+
+1. Deploy this SHA to `~/hfgcs-app` as usual (`hfgcs_deploy` / docs/deploy.md). Confirm the
+   unit mapper schedules **`hfgcs-decode`** and **`hfgcs-keyword-ntfy`** only (paths under
+   `decoding/` and `hfgcs/keyword_alerts.py`).
+2. `systemctl --user restart hfgcs-decode hfgcs-keyword-ntfy`
+3. Check: `journalctl --user -u hfgcs-decode -u hfgcs-keyword-ntfy -n 50` — decoder_version
+   starts with `decoding/0.3.4;` and the asr key differs from 0.3.3.
+4. Spot-check: a known noise/false-alert clip should not ntfy; a real Skyking with a short
+   codeword still can.
+
+**Rollback:** redeploy the previous SHA (0.3.3 / df008ac-era decode) and
+`systemctl --user restart hfgcs-decode hfgcs-keyword-ntfy`. Recorders are untouched either way.
+A new `decoder_version` re-queues clips once; rolling back re-queues again for that version.
+
