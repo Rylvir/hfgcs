@@ -22,11 +22,10 @@ import sys
 import tempfile
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 import wave
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Optional
 
@@ -144,7 +143,7 @@ def default_keywords() -> list[Keyword]:
             "nightwatch", "night watch", r"/night\s*watch\s*0?[1-4](\s*(lima|charlie))?/",
             "NW1", "NW2", "NW3", "NW4",
         ]), priority="5", tags="airplane"),
-        Keyword("gordo", _compile_patterns([r"/gordo\s*\d{1,2}/", "gordo"]), 
+        Keyword("gordo", _compile_patterns([r"/gordo\s*\d{1,2}/", "gordo"]),
                 require_callsign_context=True, priority="5", tags="rotating_light"),
         Keyword("doom", _compile_patterns(["doom"]), require_callsign_context=True, tags="airplane"),
         Keyword("rogue", _compile_patterns(["rogue"]), require_callsign_context=True, tags="airplane"),
@@ -610,7 +609,8 @@ def ntfy_publish(
     if attachment and filename:
         # PUT body = file; message/title as headers (ntfy attachment upload)
         headers["Filename"] = filename
-        headers["Message"] = message.replace("\n", " ").encode("utf-8", "replace").decode("latin-1", "replace")[:4000]
+        msg = message.replace("\n", " ").encode("utf-8", "replace")
+        headers["Message"] = msg.decode("latin-1", "replace")[:4000]
         data = attachment
         method = "PUT"
     req = urllib.request.Request(url, data=data, method=method, headers=headers)
@@ -629,7 +629,9 @@ def ntfy_publish(
         return f"error: {exc}"
 
 
-def process_doc(doc: dict, cfg: AlertConfig, dedupe: Optional[DedupeStore], *, dry_run: bool = False) -> Optional[str]:
+def process_doc(
+    doc: dict, cfg: AlertConfig, dedupe: Optional[DedupeStore], *, dry_run: bool = False,
+) -> Optional[str]:
     if not cfg.enabled:
         return None
     alert = alert_from_doc(doc, cfg)
@@ -774,7 +776,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         print("\nSummary:", file=sys.stderr)
         print(f"  docs scanned: {report['docs']}", file=sys.stderr)
         print(f"  keyword hits: {report['counts']}", file=sys.stderr)
-        print(f"  hallucination broadcasts skipped: {report['skipped_hallucination_broadcasts']}", file=sys.stderr)
+        skipped = report["skipped_hallucination_broadcasts"]
+        print(f"  hallucination broadcasts skipped: {skipped}", file=sys.stderr)
         print(f"  matched but no audio file: {report['skipped_no_audio']}", file=sys.stderr)
         return 0
     if args.watch:

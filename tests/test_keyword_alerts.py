@@ -6,8 +6,6 @@ import json
 import wave
 from pathlib import Path
 
-import pytest
-
 from hfgcs import keyword_alerts as ka
 from hfgcs.deploy import plan_units, role_of, roles_for_path
 
@@ -104,10 +102,12 @@ def test_alert_with_clip(tmp_path):
 def test_dedupe_simulcast(tmp_path):
     store = ka.DedupeStore(tmp_path / "dedupe.json", window_s=120)
     cfg = ka.AlertConfig(keywords=ka.default_keywords(), recordings_root=tmp_path)
-    _wav(tmp_path / "a.wav"); _wav(tmp_path / "b.wav")
+    _wav(tmp_path / "a.wav")
+    _wav(tmp_path / "b.wav")
     d1 = _doc("This is Zolar one one.", conf=0.8, file="a.wav", khz=11175)
     d2 = _doc("This is Zolar one one.", conf=0.6, file="b.wav", khz=8992)
-    a1 = ka.alert_from_doc(d1, cfg); a2 = ka.alert_from_doc(d2, cfg)
+    a1 = ka.alert_from_doc(d1, cfg)
+    a2 = ka.alert_from_doc(d2, cfg)
     ok1, _ = store.accept(a1)
     ok2, _ = store.accept(a2)
     assert ok1 and not ok2
