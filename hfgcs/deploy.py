@@ -114,7 +114,9 @@ def unit_file_unit(path: str) -> str | None:
 
 def order_key(unit: str) -> tuple:
     """Web units first, then the decode worker, then Kiwi units one by one, OpenWebRX (hfgcs-8992) last."""
-    rank = {REVIEW: 0, PUBLIC: 1, DECODE: 2, ALERT: 2, ONESHOT: 2, None: 2, KIWI: 3, OPENWEBRX: 4}[role_of(unit)]
+    rank = {
+        REVIEW: 0, PUBLIC: 1, DECODE: 2, ALERT: 2, ONESHOT: 2, None: 2, KIWI: 3, OPENWEBRX: 4,
+    }[role_of(unit)]
     return (rank, unit)
 
 
