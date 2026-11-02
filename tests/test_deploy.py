@@ -110,7 +110,7 @@ def idle_everywhere(sc, state_dir):
     ("tests/test_dsp.py", set()),
     ("decoding/asr.py", {"decode"}),
     ("decoding/worker.py", {"decode"}),
-    ("deploy/bin/hfgcs-python", {"review", "public", "decode"}),
+    ("deploy/bin/hfgcs-python", {"review", "public", "decode", "alert"}),
     ("scripts/hfgcs_db.py", set()),
     ("hfgcs/deploy.py", set()),
     ("hfgcs/sources/soapy.py", set()),
@@ -178,6 +178,7 @@ def test_role_of_units():
     assert d.role_of("hfgcs-datasette") is None
     assert d.role_of("hfgcs-decode") == "decode"
     assert d.role_of("hfgcs-decode-backfill") == "oneshot"
+    assert d.role_of("hfgcs-keyword-ntfy") == "alert"
 
 
 def names(plans):
