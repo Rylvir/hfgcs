@@ -1,8 +1,9 @@
 """Audio clip -> broadcast records, with the default decoding policy.
 
-Default (``DecodeConfig()``), chosen on the eval set (docs/decoding.md §1):
-  1. first pass: ``AsrConfig()`` (VAD off, previous-text conditioning, EAM
-     prompt + hotwords, bp_norm), then ``snap_words``, then the parser;
+Default (``DecodeConfig()``), decoding 0.3.4 (docs/skyking-hallucination.md):
+  1. first pass: ``AsrConfig()`` (VAD off, no previous-text conditioning, no
+     initial prompt, hotwords without Skyking, bp_norm), then ``snap_words``,
+     the parser, then hallucination suppress (weak Skykings / empty EAMs);
   2. second pass, only when the first-pass EAM has
      ``reads_agree_ratio < 0.3`` (``vote.needs_second_pass``): decode again
      with the two ``vote.SECOND_PASS_PASSES`` and replace the body with the
@@ -20,6 +21,7 @@ from typing import Callable, Optional, Sequence
 
 from .asr import AsrConfig, Transcriber
 from .eam_parser import parse_transcript
+from .hallucination import filter_records
 from .preamble import fuse_preamble
 from .snap import snap_words
 from .vote import AGREE_THRESHOLD, SECOND_PASS_PASSES, apply_vote, needs_second_pass
@@ -83,6 +85,9 @@ class Decoder:
             info.update(fired=True, passes=1 + len(others), second_pass_asr_seconds=extra_s)
         if c.preamble_fusion:
             records = [fuse_preamble(r) for r in records]
+        # Downgrade prompt-echo Skykings / empty EAMs before the document is written
+        # so keyword alerts and the DB never see them as type=skyking / empty eam.
+        records = filter_records(records, suppress=True)
         return {
             "records": records,
             "second_pass": info,

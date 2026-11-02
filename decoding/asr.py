@@ -91,8 +91,11 @@ def constrained_suppress_tokens(tokenizer, eot: int) -> list[int]:
     return [-1] + [i for i in range(eot) if i not in allowed]
 
 
-def build_hotwords(day_callsigns: Sequence[str] = ()) -> str:
-    return " ".join([*day_callsigns, "Skyking", "Mainsail", *NATO_WORDS])
+def build_hotwords(day_callsigns: Sequence[str] = (), include_skyking: bool = True) -> str:
+    head = [*day_callsigns, "Mainsail", *NATO_WORDS]
+    if include_skyking:
+        head = [*day_callsigns, "Skyking", "Mainsail", *NATO_WORDS]
+    return " ".join(head)
 
 
 PREPROCESS = {
@@ -131,7 +134,7 @@ class AsrConfig:
     )
     # On since the eval (silver 0.60 -> 0.42 with VAD off); the loops it causes on long reads are removed
     # by tokens.drop_repetition_loops before parsing.
-    condition_on_previous_text: bool = True
+    condition_on_previous_text: bool = False
     temperature: tuple = (0.0, 0.2, 0.4)
     compression_ratio_threshold: Optional[float] = 2.4
     log_prob_threshold: Optional[float] = -1.0
@@ -139,7 +142,7 @@ class AsrConfig:
     hallucination_silence_threshold: Optional[float] = 2.0
     repetition_penalty: float = 1.0
     no_repeat_ngram_size: int = 0
-    prompt: Optional[str] = "eam"  # "eam" | "phonetic" | None | literal text
+    prompt: Optional[str] = None  # None | "eam" | "phonetic" | "phonetic_only" | literal text
     hotwords: bool = True
     preprocess: str = "bp_norm"
     # Chunked mode: run silero VAD ourselves, merge speech into windows of at
@@ -194,6 +197,13 @@ class AsrConfig:
         return hashlib.sha256(json.dumps(d, sort_keys=True).encode()).hexdigest()[:12]
 
 
+# Phonetic alphabet only — no "Skyking, Skyking, do not answer" for Whisper to echo.
+PHONETIC_ONLY_PROMPT = (
+    "Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India Juliet Kilo Lima Mike November "
+    "Oscar Papa Quebec Romeo Sierra Tango Uniform Victor Whiskey X-ray Yankee Zulu "
+    "Zero One Two Three Four Five Six Seven Eight Niner."
+)
+
 PHONETIC_PROMPT = (
     "Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India Juliet Kilo Lima Mike November "
     "Oscar Papa Quebec Romeo Sierra Tango Uniform Victor Whiskey X-ray Yankee Zulu "
@@ -208,6 +218,8 @@ def resolve_prompt(cfg: AsrConfig, day_callsigns: Sequence[str] = ()) -> Optiona
         return build_prompt(day_callsigns)
     if cfg.prompt == "phonetic":
         return PHONETIC_PROMPT
+    if cfg.prompt == "phonetic_only":
+        return PHONETIC_ONLY_PROMPT
     return cfg.prompt
 
 
@@ -290,7 +302,11 @@ class Transcriber:
             beam_size=c.beam_size,
             word_timestamps=True,
             initial_prompt=resolve_prompt(c, day_callsigns) if prompt else None,
-            hotwords=build_hotwords(day_callsigns) if c.hotwords else None,
+            hotwords=(
+                build_hotwords(day_callsigns, include_skyking=c.prompt not in (None, "phonetic_only"))
+                if c.hotwords
+                else None
+            ),
             compression_ratio_threshold=c.compression_ratio_threshold,
             log_prob_threshold=c.log_prob_threshold,
             repetition_penalty=c.repetition_penalty,

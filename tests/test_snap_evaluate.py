@@ -159,5 +159,6 @@ def test_config_overrides_are_relative_to_v01_and_best_is_default():
     best, post = split_config(CONFIGS["best"])
     assert best.key() == AsrConfig().key()
     assert post == {"snap": True}
-    assert split_config(CONFIGS["nv_cond_prev"])[0].key() == AsrConfig().key()
+    assert split_config(CONFIGS["nv_cond_prev"])[0].condition_on_previous_text is True
+    assert split_config(CONFIGS["nv_cond_prev"])[0].key() != AsrConfig().key()
     assert base.condition_on_previous_text is False

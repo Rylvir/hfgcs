@@ -1,7 +1,6 @@
 """Scoring the shadow squelch against the decoded messages (hfgcs/shadow_score.py). All data is fake."""
 
 import contextlib
-import hashlib
 import importlib
 import io
 import json
@@ -119,6 +118,23 @@ def test_summary_and_list_text():
 
 # --- the command, on a real (temporary) database ------------------------------------------------
 
+def _dump_db(db):
+    """Row-level snapshot via a read-only connection (order-stable)."""
+    con = sqlite3.connect(Path(db).resolve().as_uri() + "?mode=ro", uri=True)
+    try:
+        tables = [r[0] for r in con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
+        out = {}
+        for t in tables:
+            cols = [r[1] for r in con.execute(f"PRAGMA table_info({t})")]
+            order = ", ".join(cols) if cols else "1"
+            out[t] = list(con.execute(f"SELECT * FROM {t} ORDER BY {order}"))
+        return out
+    finally:
+        con.close()
+
+
+
 def _db(tmp_path):
     db = tmp_path / "hfgcs.db"
     with contextlib.redirect_stdout(io.StringIO()):
@@ -182,7 +198,9 @@ def test_command_reads_the_database_without_changing_it(tmp_path, monkeypatch):
     con.commit()
     con.close()
     catalog, state = _files(tmp_path, [("2026-10-01T10:04:59.000Z", "2026-10-01T10:07:40.000Z")])
-    before = hashlib.sha256(db.read_bytes()).hexdigest()
+    # Compare logical contents, not file bytes: a later open can replay a hot journal into
+    # the main DB file (seen on CI Python 3.12), which changes the hash without changing rows.
+    before = _dump_db(db)
 
     rc, out, _ = _run("--catalog", catalog, "--db", db, "--decode-state", state, "--list")
     assert rc == 0
@@ -194,7 +212,7 @@ def test_command_reads_the_database_without_changing_it(tmp_path, monkeypatch):
     no_voice = next(line for line in out.splitlines() if line.strip().startswith("no voice"))
     assert no_voice.split()[2:] == ["1", "15.0", "0.0"]
     assert "would have cut or missed 1 of the 2 EAM/Skyking messages" in out
-    assert hashlib.sha256(db.read_bytes()).hexdigest() == before
+    assert _dump_db(db) == before
 
     # no decode state given and none at the worker's default place: two groups only
     rc, out, _ = _run("--catalog", catalog, "--db", db)

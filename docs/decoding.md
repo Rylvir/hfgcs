@@ -86,6 +86,9 @@ Measure each layer's effect on the eval set before adopting it.
 - **Read agreement** is the stronger signal (see §2): two independent readings plus the preamble (heard three times) give up to five observations of the first six characters.
 - Segment `avg_logprob` and `no_speech_prob` are kept for gating.
 
+### Production defaults (0.3.4)
+Since decoding 0.3.4 (docs/skyking-hallucination.md): `prompt=None`, `condition_on_previous_text=False`, hotwords without Skyking, and `filter_records(suppress=True)` in `Decoder.decode`. Keyword alerts never ntfy on EAMs.
+
 ### Reproducibility and long recordings (decoding 0.3, 2026-10-26)
 **Root cause of the dropout.** CTranslate2's int8 CPU path is not deterministic on our CPUs. The encoder output for
 the same 30 s of audio changed from call to call, with a max abs diff of about 34. That held with 1 thread, a fixed
@@ -216,7 +219,7 @@ share the first pass's loaded model, so they add no extra RAM. `python -m decodi
 scores this default. Usage: `Decoder().decode(path, day_callsigns)` returns
 `{"records", "second_pass": {"fired", "passes"}, "duration_s"}`.
 
-**Chosen first pass** (`AsrConfig()` = the `best` row): VAD off; `condition_on_previous_text=True`; EAM prompt plus
+**Chosen first pass** (through 0.3.3): VAD off; `condition_on_previous_text=True`; EAM prompt plus
 hotwords; `bp_norm` preprocessing; `hallucination_silence_threshold=2.0`; then `snap.snap_words` on the word list
 before the parser. On gold, `best` (0.542) and `no_vad_snap` (0.518) are within noise (about 6 characters of 249).
 On silver, `best` is far ahead (0.387 vs 0.591, median 0.229 vs 0.306), so pooled over both it wins (about 0.42 vs
