@@ -3,6 +3,7 @@
 Everything external is fake: a throwaway git repo, a fake systemctl and a fake clock.
 """
 
+import ast
 import json
 import os
 import subprocess
@@ -95,6 +96,8 @@ def idle_everywhere(sc, state_dir):
     ("hfgcs/dsp.py", {"openwebrx", "kiwisdr"}),
     ("hfgcs/capture.py", {"openwebrx", "kiwisdr"}),
     ("hfgcs/config.py", {"openwebrx", "kiwisdr"}),
+    ("hfgcs/shadow.py", {"openwebrx", "kiwisdr"}),
+    ("hfgcs/shadow_score.py", set()),
     ("hfgcs_scanner.py", {"openwebrx", "kiwisdr"}),
     ("hfgcs/sources/base.py", {"openwebrx", "kiwisdr"}),
     ("hfgcs/review_app.py", {"review"}),
@@ -115,6 +118,55 @@ def idle_everywhere(sc, state_dir):
 ])
 def test_roles_for_path(path, roles):
     assert set(d.roles_for_path(path)) == roles
+
+
+# Source modules only local runs load (an SDR on this machine, file replay). No deployed unit
+# uses them, so changing them restarts nothing.
+LOCAL_ONLY = {"hfgcs/sources/soapy.py", "hfgcs/sources/file.py"}
+
+
+def _repo_file(parts: list[str]) -> str | None:
+    for rel in ("/".join(parts) + ".py", "/".join(parts) + "/__init__.py"):
+        if (ROOT / rel).is_file():
+            return rel
+    return None
+
+
+def recorder_modules() -> set[str]:
+    """Repo files the recorder (hfgcs_scanner.py) imports, including imports inside functions
+    and the __init__.py of each package on the way."""
+    seen, todo = set(), ["hfgcs_scanner.py"]
+    while todo:
+        rel = todo.pop()
+        if rel in seen:
+            continue
+        seen.add(rel)
+        pkg = rel[: -len(".py")].split("/")[:-1]   # the folder, for a module and an __init__.py alike
+        names = []
+        for node in ast.walk(ast.parse((ROOT / rel).read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Import):
+                names += [a.name.split(".") for a in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                base = pkg[: len(pkg) - node.level + 1] if node.level else []
+                mod = base + (node.module.split(".") if node.module else [])
+                names.append(mod)
+                names += [mod + [a.name] for a in node.names]   # "from . import x" may name a module
+        for name in names:
+            for i in range(1, len(name) + 1):   # each package on the way, then the module
+                hit = _repo_file(name[:i])
+                if hit:
+                    todo.append(hit)
+    return seen
+
+
+def test_every_module_the_recorders_import_restarts_them():
+    mods = recorder_modules()
+    # the walk sees function-level imports (config.shadow_path, make_source)
+    assert {"hfgcs/shadow.py", "hfgcs/sources/kiwisdr.py", "hfgcs/sources/openwebrx.py"} <= mods
+    assert not any(m.startswith("decoding/") for m in mods)   # the recorders never import the decoder
+    assert "hfgcs/shadow_score.py" not in mods                # a report tool: changing it restarts nothing
+    unmapped = sorted(m for m in mods - LOCAL_ONLY if not d.roles_for_path(m) & d.RECORDERS)
+    assert unmapped == [], f"recorder code a deploy would not restart the recorders for: {unmapped}"
 
 
 def test_role_of_units():
