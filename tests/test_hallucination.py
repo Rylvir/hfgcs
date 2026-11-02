@@ -85,3 +85,33 @@ def test_alert_requires_codeword_and_conf_or_agreement():
     low = dict(good, confidence=0.1)
     assert skyking_alert_ok(low) == (False, "unconfirmed_low_conf")
     assert skyking_alert_ok(low, cross_channel=True)[0]
+
+
+def test_standing_by_for_traffic_is_routine():
+    assert is_routine_traffic(
+        {"transcript": "This is Hellstorm. Hellstorm. Stand by for traffic."}
+    )
+    assert is_routine_traffic(
+        {"transcript": "Monogram, Monogram, standing by for traffic. Monogram out."}
+    )
+    assert not is_routine_traffic(
+        {
+            "transcript": (
+                "Skyking, Skyking, do not answer. Bravo Force. "
+                "Time one five. Authentication Alpha Bravo."
+            )
+        }
+    )
+
+
+def test_routine_skyking_is_not_alerted():
+    ok, reason = skyking_alert_ok(
+        {
+            "type": "skyking",
+            "confidence": 0.9,
+            "flags": [],
+            "codeword": {"value": "MONOGRAM"},
+            "transcript": "Skyking. Monogram standing by for traffic.",
+        }
+    )
+    assert not ok and reason == "routine_traffic"

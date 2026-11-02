@@ -91,7 +91,7 @@ AsrConfig(
 
 Plus always run `filter_records(..., suppress=True)` (or the equivalent parser change from a90c95c) before alerts.
 
-**Why not v0+suppress only?** Suppress removes phantoms but leaves RTF ~1.0 and still spends CPU decoding prompt echoes. **v2/phonetic_only** removes the seed and is ~5–8× cheaper on these clips.
+**Why not v0+suppress only?** Suppress removes phantoms but leaves alert-clip RTF ~1.0 and still spends CPU on prompt echoes. **v2 (noprompt)** removes the seed, is ~5–8× cheaper on alert clips and ~3.5× on gold, at ~0.13 worse gold CER on the 6-EAM slice. **phonetic_only** is the middle ground (gold CER 0.626, RTF 0.63, no phantoms).
 
 **User decision:** Bravo Force is currently an EAM on 0.3.3. Either (a) accept Skyking alerts only for clean short-codeword Skykings and add a separate keyword for exercise names like “Bravo Force”, or (b) invest in better Skyking vs EAM classification without re-seeding the preamble.
 
@@ -111,9 +111,20 @@ Unconfirmed (low conf, single channel): **log only**, do not ntfy.
 
 `is_routine_traffic`: callsign + “standing by for traffic” (and ASR garbles like “get in by the traffic”), radio check, test count, how copy — **log, never alert**. Covers Monogram and (likely) Hellstorm.
 
-## Gold CER
+## Gold CER (6 gold EAMs, first pass + snap, box, 4 threads, nice 19)
 
-See `/workspace/skyking-exp/gold/*_summary.json` (filled by `gold_cer.py`). Compare micro CER and RTF for `live` vs `noprompt` vs `phonetic_only` on a 6-EAM gold slice, first pass + snap only.
+Fresh uncached decodes under each ASR seeding. Same clips:
+`eam-86d80b13`, `eam-f27e2d58`, `eam-7ca8cd24`, `eam-356f1a01`, `eam-3d5248c9`, `eam-ed75798a`.
+
+| Config | body CER (micro) | CER median | detected | type_acc | RTF |
+|---|---|---|---|---|---|
+| **v0 live** (eam prompt + Skyking hotwords + cond) | **0.516** | 0.667 | 0.83 | 0.83 | **0.75** |
+| phonetic_only + hotwords (no Skyking) + no cond | 0.626 | 0.567 | 1.00 | 1.00 | 0.63 |
+| **noprompt + no hotwords + no cond** | 0.648 | 0.567 | 1.00 | 1.00 | **0.21** |
+
+Reference: earlier fresh **int8** full gold first-pass was ~0.803 (14 clips). This 6-EAM float32 live slice is better on CER than that int8 run, but **noprompt costs ~0.13 CER** on this slice while cutting RTF ~3.5× vs live and wiping phantoms on the alert set.
+
+Artifacts: `/workspace/skyking-exp/gold/{live,noprompt,phonetic_only}_summary.json`.
 
 ## Files on this branch
 
