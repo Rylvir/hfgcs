@@ -7,7 +7,9 @@
     python -m decoding.worker --prefetch      # download the ASR model (small.en, ~460 MB) and exit
     python -m decoding.worker --status        # what the state file says, per capture
 
-One worker, one clip at a time, oldest first. For each capture in ``hfgcs_catalog.jsonl``:
+One worker, one clip at a time. The live watch loop takes newest captures first so
+recent traffic is decoded before backlog; ``--backfill`` stays oldest first. For each
+capture in ``hfgcs_catalog.jsonl``:
 
 1. **Voice gate** (``decoding.voice_gate``): silero-vad on the filtered audio. A clip with
    less than ``--min-speech`` seconds of speech is recorded as ``no_voice`` (skipped, not an
@@ -305,7 +307,9 @@ def next_action(rec: Optional[dict], cfg: WorkerConfig, version: str, gate_versi
 
 
 def pending(captures: list[Capture], state: State, cfg: WorkerConfig, *, backfill: bool) -> list[tuple]:
-    """``[(capture, action)]`` still to do, oldest first. Without ``backfill`` only captures
+    """``[(capture, action)]`` still to do. Live watch (``backfill=False``) is newest first so
+    recent traffic is decoded before backlog; ``--backfill`` stays oldest first (``captures``
+    must already be oldest-first from ``read_catalog``). Without ``backfill`` only captures
     that ended at or after ``watch_from_utc`` count."""
     version, gv = cfg.decoder_version(), cfg.gate_version()
     since = state.watch_from
@@ -316,6 +320,8 @@ def pending(captures: list[Capture], state: State, cfg: WorkerConfig, *, backfil
         action = next_action(state.clips.get(c.key), cfg, version, gv)
         if action:
             out.append((c, action))
+    if not backfill:
+        out.reverse()  # read_catalog is oldest-first; live wants newest first
     return out
 
 
@@ -636,20 +642,52 @@ class Worker:
             log.warning("catalog ingest failed (will retry): %s", text[-500:])
 
     def run_pass(self, *, backfill: bool = False) -> Counter:
-        """Process everything currently due, one clip at a time; return counts by outcome."""
+        """Process everything currently due, one clip at a time; return counts by outcome.
+
+        Live mode re-reads the catalog after each clip so a newly finished capture jumps
+        ahead of older backlog (newest-first). Backfill walks a snapshot oldest-first.
+        """
         cfg = self.cfg
         counts: Counter = Counter()
         self.maybe_ingest()
-        todo = pending(read_catalog(cfg.catalog, cfg.recordings_root), self.state(), cfg, backfill=backfill)
-        if todo:
-            log.info("%d capture(s) to process%s", len(todo), " (backfill)" if backfill else "")
-        for c, _ in todo:
-            if self.stop:
+        if backfill:
+            todo = pending(read_catalog(cfg.catalog, cfg.recordings_root), self.state(),
+                           cfg, backfill=True)
+            if todo:
+                log.info("%d capture(s) to process (backfill)", len(todo))
+            queue = list(todo)
+            while queue and not self.stop:
+                c, _ = queue.pop(0)
+                try:
+                    with self.lock():
+                        st = self.state()  # another worker may have done it meanwhile
+                        ver, gv = cfg.decoder_version(), cfg.gate_version()
+                        action = next_action(st.clips.get(c.key), cfg, ver, gv)
+                        if action is None:
+                            counts["done_elsewhere"] += 1
+                            continue
+                        outcome = self.process(c, action, st)
+                except InterruptedError:
+                    break
+                counts[outcome] += 1
+            return counts
+
+        # Live: pick the current newest pending clip each time so new captures preempt backlog.
+        announced = False
+        while not self.stop:
+            todo = pending(read_catalog(cfg.catalog, cfg.recordings_root), self.state(),
+                           cfg, backfill=False)
+            if not announced and todo:
+                log.info("%d capture(s) to process", len(todo))
+                announced = True
+            if not todo:
                 break
+            c, _ = todo[0]
             try:
                 with self.lock():
-                    st = self.state()  # another worker may have done it meanwhile
-                    action = next_action(st.clips.get(c.key), cfg, cfg.decoder_version(), cfg.gate_version())
+                    st = self.state()
+                    ver, gv = cfg.decoder_version(), cfg.gate_version()
+                    action = next_action(st.clips.get(c.key), cfg, ver, gv)
                     if action is None:
                         counts["done_elsewhere"] += 1
                         continue

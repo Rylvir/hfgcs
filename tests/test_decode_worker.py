@@ -128,6 +128,84 @@ def test_watch_takes_only_new_captures_backfill_takes_all(app):
     assert [c.name for c, _ in w.pending(caps, st, cfg, backfill=True)] == ["old.wav", "new.wav"]
 
 
+def test_pending_live_newest_first_backfill_oldest_first(app):
+    """Live watch orders newest first; --backfill stays oldest first."""
+    add_capture(app, "early", 0)
+    add_capture(app, "mid", 30)
+    add_capture(app, "late", 60)
+    cfg = cfg_for(app)
+    st = w.State(cfg.state_file)
+    st.set_watch_from(z(T0 - timedelta(minutes=1)))  # all three are in the watch window
+    caps = w.read_catalog(cfg.catalog)
+    assert [c.name for c in caps] == ["early.wav", "mid.wav", "late.wav"]  # catalog stays oldest-first
+    assert [c.name for c, _ in w.pending(caps, st, cfg, backfill=False)] == [
+        "late.wav", "mid.wav", "early.wav",
+    ]
+    assert [c.name for c, _ in w.pending(caps, st, cfg, backfill=True)] == [
+        "early.wav", "mid.wav", "late.wav",
+    ]
+
+
+def test_live_run_pass_processes_newest_first(app):
+    """A live run_pass decodes newest captures before older backlog in the same window."""
+    add_capture(app, "HFGCS_8992kHz_old", 0)
+    add_capture(app, "HFGCS_8992kHz_mid", 30)
+    add_capture(app, "HFGCS_8992kHz_new", 60)
+    cfg = cfg_for(app)
+    worker = w.Worker(cfg)
+    worker.init_watch_from()
+    # Force watch_from before all three so they are all due in live mode.
+    st = w.State(cfg.state_file).load()
+    st.set_watch_from(z(T0 - timedelta(minutes=1)))
+    st.save()
+    assert worker.run_pass() == {"decoded": 3}
+    asr = [x for x in fake_log(app) if x["kind"] == "asr"]
+    assert [x["audio"] for x in asr] == [
+        "HFGCS_8992kHz_new.wav", "HFGCS_8992kHz_mid.wav", "HFGCS_8992kHz_old.wav",
+    ]
+
+
+def test_live_new_capture_preempts_backlog(app):
+    """After each live clip, pending is re-read so a newly finished capture jumps the queue."""
+    add_capture(app, "HFGCS_8992kHz_old", 0)
+    add_capture(app, "HFGCS_8992kHz_mid", 30)
+    cfg = cfg_for(app)
+    worker = w.Worker(cfg)
+    st = w.State(cfg.state_file)
+    st.set_watch_from(z(T0 - timedelta(minutes=1)))
+    st.save()
+
+    seen = []
+    real_process = worker.process
+
+    def process(c, action, st_):
+        seen.append(c.name)
+        if c.name == "HFGCS_8992kHz_mid.wav":
+            # Mid is newest when the pass starts; while it runs, a newer clip lands.
+            add_capture(app, "HFGCS_8992kHz_fresh", 90)
+        return real_process(c, action, st_)
+
+    worker.process = process
+    counts = worker.run_pass()
+    assert counts == {"decoded": 3}
+    assert seen == [
+        "HFGCS_8992kHz_mid.wav",     # newest at start
+        "HFGCS_8992kHz_fresh.wav",   # preempts old after rescan
+        "HFGCS_8992kHz_old.wav",
+    ]
+
+
+def test_backfill_still_oldest_first(app):
+    add_capture(app, "HFGCS_8992kHz_old", 0)
+    add_capture(app, "HFGCS_8992kHz_mid", 30)
+    add_capture(app, "HFGCS_8992kHz_new", 60)
+    assert w.Worker(cfg_for(app)).backfill() == 0
+    asr = [x for x in fake_log(app) if x["kind"] == "asr"]
+    assert [x["audio"] for x in asr] == [
+        "HFGCS_8992kHz_old.wav", "HFGCS_8992kHz_mid.wav", "HFGCS_8992kHz_new.wav",
+    ]
+
+
 def test_timeout_for_clamps():
     cfg = w.WorkerConfig(timeout_factor=10, timeout_min_s=120, timeout_max_s=1800)
     assert cfg.timeout_for(3.0) == 120
