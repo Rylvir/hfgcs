@@ -487,12 +487,12 @@ docs/deploy.md "Decode service".
 
 | Mode | What it does |
 |---|---|
-| (default) | watch loop: every `--poll` s (30), process captures whose `end_utc` is after the worker's first start |
+| (default) | watch loop: every `--poll` s (30), process captures whose `end_utc` is after the worker's first start, **newest first**; re-reads the catalog after each clip so a new capture preempts older backlog |
 | `--once` | one pass of the watch loop, then exit |
-| `--backfill` | every capture in the catalog, older ones included, oldest first; repeats until nothing is left; exits (`hfgcs-decode-backfill.service`) |
+| `--backfill` | every capture in the catalog, older ones included, **oldest first**; repeats until nothing is left; exits (`hfgcs-decode-backfill.service`) |
 | `--check` / `--prefetch` / `--status` | readiness check (exit 78 if not ready) / download the model / per-capture state |
 
-Per capture, one at a time (a lock file in the state dir also serialises a backfill running beside the unit):
+Ordering does not change decode outputs, so it does not bump `decoder_version`. Per capture, one at a time (a lock file in the state dir also serialises a backfill running beside the unit):
 
 1. **Ingest**: when the catalog grew, `hfgcs_db.py ingest-catalog` (idempotent), so every capture is on the
    review page even before or without a decode.
